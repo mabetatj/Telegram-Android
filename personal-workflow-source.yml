@@ -1,6 +1,8 @@
 name: Personal APK build
 
 on:
+  push:
+    branches: [personal-build]
   workflow_dispatch:
 
 permissions:
