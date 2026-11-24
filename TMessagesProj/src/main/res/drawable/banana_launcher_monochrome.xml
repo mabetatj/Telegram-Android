@@ -1,25 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- NanoGram monochrome layer: mask silhouette for themed icons. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group
-        android:scaleX="0.0703125"
-        android:scaleY="0.0703125"
-        android:translateX="18"
-        android:translateY="18">
-        <group
-            android:scaleX="1.08"
-            android:scaleY="1.08"
-            android:translateX="-41"
-            android:translateY="-41">
-            <path
-                android:fillColor="#000000"
-                android:pathData="M244,374C304,592 553,645 721,419C754,374 775,317 786,248C881,575 699,805 462,805C303,805 208,662 220,440Q224,402 244,374Z" />
-            <path
-                android:fillColor="#000000"
-                android:pathData="M300,352L661,209Q679,202 675,221L604,514L509,437L461,499L458,409Z" />
-        </group>
-    </group>
+    <!-- horns -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M47,35 C42,31 40,27 42,23 C44,27 46,30 49,32" />
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M61,35 C66,31 68,27 66,23 C64,27 62,30 59,32" />
+    <!-- head outline -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M54,30 C62,30 68,38 68,48 C68,60 62,74 54,84 C46,74 40,60 40,48 C40,38 46,30 54,30 Z" />
+    <!-- ears -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M40,50 C35,48 30,50 27,54 C32,55 37,55 41,54" />
+    <path
+        android:strokeColor="#000000"
+        android:strokeColor2="#000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M68,50 C73,48 78,50 81,54 C76,55 71,55 67,54" />
+    <!-- angry brow -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M42,53 L54,57 L66,53" />
+    <!-- eyes -->
+    <path
+        android:strokeColor="#FF2A2A"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M44,60 L52,63" />
+    <path
+        android:strokeColor="#FF2A2A"
+        adaptive-icon-test="ignore"
+        android:strokeColor="#FF2A2A"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeColor="#FF2A2A"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        "M64,60 L56,63" />
+    <!-- nose -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="render"
+        android:pathData="M51,64 L54,70 L57,64" />
+    <!-- teeth -->
+    <path
+        android:strokeColor="#000000"
+        android:strokeWidth="1.4"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M42,73 L45,78 L48,73 L51,78 L54,75 L54,73 L57,78 L60,73 L63,78 L66,73" />
+    <!-- grin -->
+    <<path
+        android:strokeColor="#000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M42,73 C48,80 60,80 66,73" />
 </vector>
