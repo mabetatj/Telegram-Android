@@ -30,7 +30,6 @@
         android:pathData="M40,50 C35,48 30,50 27,54 C32,55 37,55 41,54" />
     <path
         android:strokeColor="#000000"
-        android:strokeColor2="#000000"
         android:strokeWidth="2"
         android:strokeLineCap="round"
         android:pathData="M68,50 C73,48 78,50 81,54 C76,55 71,55 67,54" />
@@ -42,25 +41,20 @@
         android:pathData="M42,53 L54,57 L66,53" />
     <!-- eyes -->
     <path
-        android:strokeColor="#FF2A2A"
+        android:strokeColor="#000000"
         android:strokeWidth="2.6"
         android:strokeLineCap="round"
         android:pathData="M44,60 L52,63" />
     <path
-        android:strokeColor="#FF2A2A"
-        adaptive-icon-test="ignore"
-        android:strokeColor="#FF2A2A"
+        android:strokeColor="#000000"
         android:strokeWidth="2.6"
         android:strokeLineCap="round"
-        android:strokeColor="#FF2A2A"
-        android:strokeWidth="2.6"
-        android:strokeLineCap="round"
-        "M64,60 L56,63" />
+        android:pathData="M64,60 L56,63" />
     <!-- nose -->
     <path
         android:strokeColor="#000000"
         android:strokeWidth="1.6"
-        android:strokeLineCap="render"
+        android:strokeLineCap="round"
         android:pathData="M51,64 L54,70 L57,64" />
     <!-- teeth -->
     <path
@@ -68,9 +62,9 @@
         android:strokeWidth="1.4"
         android:strokeLineJoin="round"
         android:strokeLineCap="round"
-        android:pathData="M42,73 L45,78 L48,73 L51,78 L54,75 L54,73 L57,78 L60,73 L63,78 L66,73" />
+        android:pathData="M42,73 L45,78 L48,73 L51,78 L54,73 L57,78 L60,73 L63,78 L66,73" />
     <!-- grin -->
-    <<path
+    <path
         android:strokeColor="#000000"
         android:strokeWidth="2"
         android:strokeLineCap="round"
