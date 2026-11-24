@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build personal BananaGram APK
+    name: Build personal NanoGram APK
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -50,7 +50,7 @@ jobs:
             rm -f "$KEY_DIR/release.p12"
             keytool -genkeypair -storetype PKCS12 -keystore "$KEY_DIR/release.p12" \
               -storepass "$PASS" -keypass "$PASS" -alias personal \
-              -dname "CN=Personal BananaGram" -validity 10000 -keyalg RSA -keysize 4096
+              -dname "CN=Personal NanoGram" -validity 10000 -keyalg RSA -keysize 4096
           fi
           test -s "$KEY_DIR/release.p12"
 
@@ -76,6 +76,9 @@ jobs:
           F="TMessagesProj/src/main/java/com/radolyn/ayugram/AyuConstants.java"
           sed -i 's/"ayusync-dev.radolyn.com:5000"/"127.0.0.1:1"/; s/"ayusync.cloud"/"127.0.0.1:1"/' "$F"
           if grep -q 'ayusync.cloud' "$F"; then echo 'AyuSync endpoint not patched' >&2; exit 1; fi
+                    sed -i 's/APP_DISPLAY_NAME = "BananaGram"/APP_DISPLAY_NAME = "NanoGram"/' "$F"
+          grep -q 'APP_DISPLAY_NAME = "NanoGram"' "$F"
+          
 
       - name: Prepare ccache
         run: |
@@ -111,12 +114,12 @@ jobs:
           APK="$(find TMessagesProj_AppStandalone/build -path '*outputs/apk*' -name 'app.apk' | head -n1)"
           if [ -z "$APK" ]; then APK="$(find TMessagesProj_AppStandalone/build -name '*.apk' | head -n1)"; fi
           test -s "$APK"
-          cp "$APK" dist/BananaGram-personal.apk
+          cp "$APK" dist/NanoGram-personal.apk
           cd dist && sha256sum ./* > SHA256SUMS
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: BananaGram-personal-apk
+          name: NanoGram-personal-apk
           path: dist/
           if-no-files-found: error
           retention-days: 30
