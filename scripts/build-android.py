@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Build with optional local credentials, without putting them in arguments or logs.
 
-Also applies the NanoGram AI patch before the Gradle build:
-the manifest gets a startup provider (nanogram.ai.NanoGramAiInit) that pins a
-"NanoGram AI" row at the top of the dialogs list (inside the chat list screen,
-below the action bar). Tapping the row opens the AI chat. All anchors are
-verified at patch time; the build fails loudly if they disappear so a broken
-APK is never shipped silently.
+Also applies patches before the Gradle build:
+
+1. NanoGram AI patch: the manifest gets a startup provider (nanogram.ai.NanoGramAiInit)
+   that pins a "NanoGram AI" row at the top of the dialogs list (inside the chat list
+   screen, below the action bar). Tapping the row opens the AI chat. All anchors are
+   verified at patch time; the build fails loudly if they disappear so a broken APK
+   is never shipped silently.
+
+2. NanoGram rename patch: BananaGram is renamed to NanoGram everywhere the user
+   can see it - the launcher label and in-app name in every localized strings.xml,
+   and the header title string exteraAppName in every localized extera.xml. The
+   chat-list header defaults to showing the app name instead of the account name.
 """
 import argparse
 import json
@@ -21,6 +27,14 @@ PROVIDER_LINE = ('        <provider\n'
                  '            android:authorities="${applicationId}.nanogram_ai_init"\n'
                  '            android:exported="false"\n'
                  '            android:initOrder="100" />\n')
+
+RESOURCES_DIR = Path('TMessagesProj/src/main/res')
+OLD_NAME = 'BananaGram'
+NEW_NAME = 'NanoGram'
+
+EXTERA_CONFIG_PATH = Path('TMessagesProj/src/main/java/com/exteragram/messenger/ExteraConfig.java')
+TITLE_OLD = 'preferences.getInt("titleText", 2)'
+TITLE_NEW = 'preferences.getInt("titleText", 0)'
 
 
 def patch_manifest(root):
@@ -41,6 +55,57 @@ def patch_manifest(root):
     print('nanogram-ai: NanoGramAiInit provider registered in manifest')
 
 
+def patch_resources(root):
+    """Rename BananaGram to NanoGram in every localized strings.xml and extera.xml.
+
+    strings.xml carries the launcher label (AppName/AppNameBeta); extera.xml carries
+    exteraAppName, which is what the chat-list header shows when the title mode is
+    set to the app name.
+    """
+    res = root / RESOURCES_DIR
+    if not res.is_dir():
+        raise SystemExit('nanogram: resources directory not found; aborting build.')
+    targets = sorted(set(res.glob('values*/strings.xml')) | set(res.glob('values*/extera.xml')))
+    patched = 0
+    for path in targets:
+        text = path.read_text(encoding='utf-8')
+        if OLD_NAME not in text:
+            continue
+        text = text.replace(OLD_NAME + ' Beta', NEW_NAME + ' Beta')
+        text = text.replace(OLD_NAME, NEW_NAME)
+        path.write_text(text, encoding='utf-8')
+        patched += 1
+        print('nanogram: renamed %s to %s in %s' % (OLD_NAME, NEW_NAME, path.relative_to(root)))
+    remaining = sum(1 for path in targets if OLD_NAME in path.read_text(encoding='utf-8'))
+    if remaining:
+        raise SystemExit('nanogram: %d resource files still contain %s; aborting build.' % (remaining, OLD_NAME))
+    if patched == 0:
+        print('nanogram: no BananaGram strings found in resources (already renamed)')
+    else:
+        print('nanogram: renamed in %d resource file(s)' % patched)
+
+
+def patch_header_title(root):
+    """Default the chat-list header to the app name instead of the account name.
+
+    ExteraConfig.titleText modes: 0 = app name, 1 = username, 2 = first name,
+    3 = "Chats". The upstream default 2 shows the account name in the header;
+    NanoGram as a personal fork defaults to showing its own name.
+    """
+    path = root / EXTERA_CONFIG_PATH
+    if not path.is_file():
+        raise SystemExit('nanogram: ExteraConfig.java not found; aborting build.')
+    text = path.read_text(encoding='utf-8')
+    if TITLE_NEW in text:
+        print('nanogram: header title already defaults to the app name')
+        return
+    if TITLE_OLD not in text:
+        raise SystemExit('nanogram: titleText default not found in ExteraConfig.java; aborting build.')
+    text = text.replace(TITLE_OLD, TITLE_NEW)
+    path.write_text(text, encoding='utf-8')
+    print('nanogram: chat-list header now defaults to the app name (NanoGram)')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--credentials-file', type=Path)
@@ -48,6 +113,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     patch_manifest(root)
+    patch_resources(root)
+    patch_header_title(root)
     env = dict(os.environ)
     if args.credentials_file:
         try:
