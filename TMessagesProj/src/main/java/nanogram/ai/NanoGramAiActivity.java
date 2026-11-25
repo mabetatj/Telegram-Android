@@ -18,14 +18,15 @@ import android.widget.TextView;
 import java.util.List;
 
 /**
- * Р­РєСЂР°РЅ РР-С‡Р°С‚Р° NanoGram.
+ * Экран ИИ-чата NanoGram.
  *
- * РњРѕРґСѓР»СЊ 2: СЃР°РјРѕРґРѕСЃС‚Р°С‚РѕС‡РЅС‹Р№ СЌРєСЂР°РЅ РЅР° С‡РёСЃС‚РѕРј Android UI (Р±РµР· Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№ РѕС‚ РєР»Р°СЃСЃРѕРІ Telegram-С„РѕСЂРєР°),
- * РїРѕСЌС‚РѕРјСѓ РµРіРѕ РґРѕР±Р°РІР»РµРЅРёРµ РЅРµ РјРѕР¶РµС‚ СЃР»РѕРјР°С‚СЊ СЃР±РѕСЂРєСѓ.
+ * Самодостаточный экран на чистом Android UI (без зависимостей от классов Telegram-форка),
+ * поэтому его добавление не может сломать сборку.
  *
- * - РўС‘РјРЅР°СЏ С‚РµРјР° РІ С‚РѕРЅ NanoGram.
- * - РЎРѕРѕР±С‰РµРЅРёСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃРїСЂР°РІР°, РѕС‚РІРµС‚С‹ РР СЃР»РµРІР°, СЃС‚СЂРёРјРёРЅРі РїРѕ Р±СѓРєРІР°Рј.
- * - РљРЅРѕРїРєР° РѕС‚РїСЂР°РІРєРё РґРµР°РєС‚РёРІРЅР°, РїРѕРєР° РѕС‚РІРµС‚ РіРµРЅРµСЂРёСЂСѓРµС‚СЃСЏ; РїРѕРІС‚РѕСЂРЅС‹Р№ С‚Р°Рї РїРѕ РЅРµР№ = СЃС‚РѕРї.
+ * - Тёмная тема в тон NanoGram.
+ * - Сообщения пользователя справа, ответы ИИ слева, стриминг по буквам.
+ * - Кнопка отправки превращается в «стоп» на время генерации; повторный тап = стоп.
+ * - При ошибке сети показывается понятное сообщение, отмена не считается ошибкой.
  */
 public class NanoGramAiActivity extends Activity {
 
@@ -33,7 +34,8 @@ public class NanoGramAiActivity extends Activity {
     private ScrollView scroll;
     private EditText inputField;
     private TextView sendButton;
-    private TextView assistantBubble;   // РїСѓР·С‹СЂСЊ С‚РµРєСѓС‰РµРіРѕ РѕС‚РІРµС‚Р° (СЃС‚СЂРёРјРёРЅРі)
+    private TextView assistantBubble;   // пузырь текущего ответа (стриминг)
+    private TextView typingBubble;      // «Думаю…» до первого токена
     private StringBuilder streamingText = new StringBuilder();
     private volatile boolean generating = false;
 
@@ -43,11 +45,9 @@ public class NanoGramAiActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF17212B); // С‚С‘РјРЅС‹Р№ С„РѕРЅ NanoGram
-        root.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
+        root.setBackgroundColor(0xFF17212B); // тёмный фон NanoGram
 
-        // --- РЁР°РїРєР° ---
+        // --- Шапка ---
         TextView header = new TextView(this);
         header.setText("NanoGram AI");
         header.setTextColor(Color.WHITE);
@@ -62,7 +62,7 @@ public class NanoGramAiActivity extends Activity {
         root.addView(line, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
 
-        // --- Р›РµРЅС‚Р° СЃРѕРѕР±С‰РµРЅРёР№ ---
+        // --- Лента сообщений ---
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         messagesList = new LinearLayout(this);
@@ -74,17 +74,16 @@ public class NanoGramAiActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
         root.addView(scroll, scrollParams);
 
-        // --- РџРѕР»Рµ РІРІРѕРґР° ---
+        // --- Поле ввода ---
         LinearLayout bottom = new LinearLayout(this);
         bottom.setOrientation(LinearLayout.HORIZONTAL);
         bottom.setPadding(dp(8), dp(8), dp(8), dp(8));
         bottom.setBackgroundColor(0xFF17212B);
 
         inputField = new EditText(this);
-        inputField.setHint("РЎРїСЂРѕСЃРёС‚Рµ NanoGram AI...");
+        inputField.setHint("Спросить NanoGram AI...");
         inputField.setHintTextColor(0xFF6D7A85);
         inputField.setTextColor(Color.WHITE);
-        inputField.setBackgroundColor(0xFF232E3C);
         inputField.setPadding(dp(14), dp(10), dp(14), dp(10));
         inputField.setImeOptions(EditorInfo.IME_ACTION_SEND);
         inputField.setMaxLines(6);
@@ -96,7 +95,7 @@ public class NanoGramAiActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         sendButton = new TextView(this);
-        sendButton.setText("вћ¤");
+        sendButton.setText("➤");
         sendButton.setTextColor(0xFF5288C1);
         sendButton.setTextSize(24);
         sendButton.setGravity(Gravity.CENTER);
@@ -111,7 +110,7 @@ public class NanoGramAiActivity extends Activity {
 
         setContentView(root);
 
-        // --- РЎР»СѓС€Р°С‚РµР»Рё ---
+        // --- Слушатели ---
         inputField.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             public void onTextChanged(CharSequence s, int a, int b, int c) { }
@@ -133,14 +132,14 @@ public class NanoGramAiActivity extends Activity {
         renderHistory();
     }
 
-    /** РџРѕРєР°Р·С‹РІР°РµС‚ СЃРѕС…СЂР°РЅС‘РЅРЅСѓСЋ РёСЃС‚РѕСЂРёСЋ (РїРѕСЃР»Рµ РїСЂРѕС€Р»РѕРіРѕ Р·Р°РїСѓСЃРєР°). */
+    /** Показывает сохранённую историю (после прошлого запуска). */
     private void renderHistory() {
         List<NanoGramAi.Message> history = NanoGramAi.getInstance(this).getHistory();
         for (NanoGramAi.Message m : history) {
             addBubble(m.content, m.role.equals("user"), false);
         }
         if (history.isEmpty()) {
-            addBubble("РџСЂРёРІРµС‚! РЇ NanoGram AI вЂ” СЃРїСЂРѕСЃРё РјРµРЅСЏ Рѕ С‡С‘Рј СѓРіРѕРґРЅРѕ.", false, false);
+            addBubble("Привет! Я NanoGram AI — спроси меня о чём угодно.", false, false);
         }
         scrollToBottom();
     }
@@ -153,12 +152,21 @@ public class NanoGramAiActivity extends Activity {
         setGenerating(true);
 
         assistantBubble = null;
+        typingBubble = null;
         streamingText.setLength(0);
 
         NanoGramAi.getInstance(this).send(text, new NanoGramAi.Listener() {
             @Override
             public void onToken(String delta) {
                 runOnUiThread(() -> {
+                    if (typingBubble != null) {
+                        // Убираем «Думаю…» перед первым токеном ответа.
+                        View parent = (View) typingBubble.getParent();
+                        if (parent instanceof LinearLayout) {
+                            ((LinearLayout) parent).removeView(typingBubble);
+                        }
+                        typingBubble = null;
+                    }
                     if (assistantBubble == null) {
                         assistantBubble = addBubble("", false, true);
                     }
@@ -172,37 +180,49 @@ public class NanoGramAiActivity extends Activity {
             public void onSuccess() {
                 runOnUiThread(() -> {
                     if (assistantBubble == null) {
-                        addBubble(streamingText.length() > 0 ? streamingText.toString() : "(РїСѓСЃС‚РѕР№ РѕС‚РІРµС‚)", false, false);
+                        addBubble(streamingText.length() > 0 ? streamingText.toString() : "(пустой ответ)", false, false);
                     }
                     setGenerating(false);
                 });
             }
 
             @Override
-            public void onError(String message) {
+            public void onError(String message, boolean userCancelled) {
                 runOnUiThread(() -> {
-                    addBubble("вљ  " + message, false, false);
+                    if (userCancelled) {
+                        addBubble("⏹ Остановлено", false, false);
+                    } else {
+                        addBubble("⚠ " + message, false, false);
+                    }
                     setGenerating(false);
                 });
             }
         });
+
+        // «Думаю…» пока не пришёл первый кусочек ответа.
+        showTyping();
+    }
+
+    private void showTyping() {
+        if (generating) {
+            typingBubble = addBubble("Думаю…", false, false);
+        }
     }
 
     private void stopGenerating() {
         NanoGramAi.getInstance(this).cancel();
         setGenerating(false);
-        addBubble("вЏ№ РћСЃС‚Р°РЅРѕРІР»РµРЅРѕ", false, false);
     }
 
     private void setGenerating(boolean on) {
         generating = on;
-        sendButton.setText(on ? "вЏ№" : "вћ¤");
+        sendButton.setText(on ? "⏹" : "➤");
         sendButton.setEnabled(on || inputField.length() > 0);
         sendButton.setAlpha(sendButton.isEnabled() ? 1f : 0.4f);
         sendButton.setTextColor(on ? 0xFFE06060 : 0xFF5288C1);
     }
 
-    /** Р”РѕР±Р°РІР»СЏРµС‚ РїСѓР·С‹СЂСЊ СЃРѕРѕР±С‰РµРЅРёСЏ; true = РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ (СЃРїСЂР°РІР°), false = РР (СЃР»РµРІР°). */
+    /** Добавляет пузырь сообщения; true = пользователь (справа), false = ИИ (слева). */
     private TextView addBubble(String text, boolean mine, boolean streaming) {
         TextView bubble = new TextView(this);
         bubble.setText(text);
@@ -212,7 +232,7 @@ public class NanoGramAiActivity extends Activity {
         bubble.setLineSpacing(dp(2), 1f);
 
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(mine ? 0xFF2B5278 : 0xFF232E3C); // СЃРёРЅРёР№NanoGram / С‚С‘РјРЅС‹Р№
+        bg.setColor(mine ? 0xFF2B5278 : 0xFF232E3C); // синий NanoGram / тёмный
         bg.setCornerRadius(dp(14));
         bubble.setBackground(bg);
 
