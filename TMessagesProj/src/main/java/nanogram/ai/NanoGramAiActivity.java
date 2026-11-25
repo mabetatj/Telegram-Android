@@ -18,14 +18,15 @@ import android.widget.TextView;
 import java.util.List;
 
 /**
- * Р­РєСЂР°РЅ РР-С‡Р°С‚Р° NanoGram.
+ * NanoGram AI chat screen.
  *
- * РњРѕРґСѓР»СЊ 2: СЃР°РјРѕРґРѕСЃС‚Р°С‚РѕС‡РЅС‹Р№ СЌРєСЂР°РЅ РЅР° С‡РёСЃС‚РѕРј Android UI (Р±РµР· Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№ РѕС‚ РєР»Р°СЃСЃРѕРІ Telegram-С„РѕСЂРєР°),
- * РїРѕСЌС‚РѕРјСѓ РµРіРѕ РґРѕР±Р°РІР»РµРЅРёРµ РЅРµ РјРѕР¶РµС‚ СЃР»РѕРјР°С‚СЊ СЃР±РѕСЂРєСѓ.
+ * Self-contained plain Android UI screen (no dependencies on Telegram fork classes),
+ * so adding it cannot break the build.
  *
- * - РўС‘РјРЅР°СЏ С‚РµРјР° РІ С‚РѕРЅ NanoGram.
- * - РЎРѕРѕР±С‰РµРЅРёСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃРїСЂР°РІР°, РѕС‚РІРµС‚С‹ РР СЃР»РµРІР°, СЃС‚СЂРёРјРёРЅРі РїРѕ Р±СѓРєРІР°Рј.
- * - РљРЅРѕРїРєР° РѕС‚РїСЂР°РІРєРё РґРµР°РєС‚РёРІРЅР°, РїРѕРєР° РѕС‚РІРµС‚ РіРµРЅРµСЂРёСЂСѓРµС‚СЃСЏ; РїРѕРІС‚РѕСЂРЅС‹Р№ С‚Р°Рї РїРѕ РЅРµР№ = СЃС‚РѕРї.
+ * - Dark theme in NanoGram colors.
+ * - User messages on the right, AI replies on the left, streamed token by token.
+ * - All user-visible strings are plain English ASCII, so no encoding issue can garble them.
+ * - The send button turns into a stop button while a reply is streaming.
  */
 public class NanoGramAiActivity extends Activity {
 
@@ -33,7 +34,7 @@ public class NanoGramAiActivity extends Activity {
     private ScrollView scroll;
     private EditText inputField;
     private TextView sendButton;
-    private TextView assistantBubble;   // РїСѓР·С‹СЂСЊ С‚РµРєСѓС‰РµРіРѕ РѕС‚РІРµС‚Р° (СЃС‚СЂРёРјРёРЅРі)
+    private TextView assistantBubble;   // bubble of the streaming reply
     private StringBuilder streamingText = new StringBuilder();
     private volatile boolean generating = false;
 
@@ -43,11 +44,11 @@ public class NanoGramAiActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF17212B); // С‚С‘РјРЅС‹Р№ С„РѕРЅ NanoGram
+        root.setBackgroundColor(0xFF17212B); // dark NanoGram background
         root.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
 
-        // --- РЁР°РїРєР° ---
+        // --- Header ---
         TextView header = new TextView(this);
         header.setText("NanoGram AI");
         header.setTextColor(Color.WHITE);
@@ -62,7 +63,7 @@ public class NanoGramAiActivity extends Activity {
         root.addView(line, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
 
-        // --- Р›РµРЅС‚Р° СЃРѕРѕР±С‰РµРЅРёР№ ---
+        // --- Message list ---
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         messagesList = new LinearLayout(this);
@@ -74,17 +75,16 @@ public class NanoGramAiActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
         root.addView(scroll, scrollParams);
 
-        // --- РџРѕР»Рµ РІРІРѕРґР° ---
+        // --- Input area ---
         LinearLayout bottom = new LinearLayout(this);
         bottom.setOrientation(LinearLayout.HORIZONTAL);
         bottom.setPadding(dp(8), dp(8), dp(8), dp(8));
         bottom.setBackgroundColor(0xFF17212B);
 
         inputField = new EditText(this);
-        inputField.setHint("РЎРїСЂРѕСЃРёС‚Рµ NanoGram AI...");
+        inputField.setHint("Ask NanoGram AI...");
         inputField.setHintTextColor(0xFF6D7A85);
         inputField.setTextColor(Color.WHITE);
-        inputField.setBackgroundColor(0xFF232E3C);
         inputField.setPadding(dp(14), dp(10), dp(14), dp(10));
         inputField.setImeOptions(EditorInfo.IME_ACTION_SEND);
         inputField.setMaxLines(6);
@@ -96,14 +96,15 @@ public class NanoGramAiActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         sendButton = new TextView(this);
-        sendButton.setText("вћ¤");
+        sendButton.setText("Send");
         sendButton.setTextColor(0xFF5288C1);
-        sendButton.setTextSize(24);
+        sendButton.setTextSize(16);
+        sendButton.setTypeface(Typeface.DEFAULT_BOLD);
         sendButton.setGravity(Gravity.CENTER);
         sendButton.setPadding(dp(6), dp(8), dp(6), dp(8));
         sendButton.setEnabled(false);
         sendButton.setAlpha(0.4f);
-        bottom.addView(sendButton, new LinearLayout.LayoutParams(dp(56),
+        bottom.addView(sendButton, new LinearLayout.LayoutParams(dp(64),
                 LinearLayout.LayoutParams.MATCH_PARENT));
 
         root.addView(bottom, new LinearLayout.LayoutParams(
@@ -111,7 +112,7 @@ public class NanoGramAiActivity extends Activity {
 
         setContentView(root);
 
-        // --- РЎР»СѓС€Р°С‚РµР»Рё ---
+        // --- Listeners ---
         inputField.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             public void onTextChanged(CharSequence s, int a, int b, int c) { }
@@ -133,14 +134,14 @@ public class NanoGramAiActivity extends Activity {
         renderHistory();
     }
 
-    /** РџРѕРєР°Р·С‹РІР°РµС‚ СЃРѕС…СЂР°РЅС‘РЅРЅСѓСЋ РёСЃС‚РѕСЂРёСЋ (РїРѕСЃР»Рµ РїСЂРѕС€Р»РѕРіРѕ Р·Р°РїСѓСЃРєР°). */
+    /** Shows the saved history from previous launches. */
     private void renderHistory() {
         List<NanoGramAi.Message> history = NanoGramAi.getInstance(this).getHistory();
         for (NanoGramAi.Message m : history) {
             addBubble(m.content, m.role.equals("user"), false);
         }
         if (history.isEmpty()) {
-            addBubble("РџСЂРёРІРµС‚! РЇ NanoGram AI вЂ” СЃРїСЂРѕСЃРё РјРµРЅСЏ Рѕ С‡С‘Рј СѓРіРѕРґРЅРѕ.", false, false);
+            addBubble("Hi! I am NanoGram AI. Ask me anything.", false, false);
         }
         scrollToBottom();
     }
@@ -172,7 +173,7 @@ public class NanoGramAiActivity extends Activity {
             public void onSuccess() {
                 runOnUiThread(() -> {
                     if (assistantBubble == null) {
-                        addBubble(streamingText.length() > 0 ? streamingText.toString() : "(РїСѓСЃС‚РѕР№ РѕС‚РІРµС‚)", false, false);
+                        addBubble(streamingText.length() > 0 ? streamingText.toString() : "(empty reply)", false, false);
                     }
                     setGenerating(false);
                 });
@@ -181,7 +182,7 @@ public class NanoGramAiActivity extends Activity {
             @Override
             public void onError(String message) {
                 runOnUiThread(() -> {
-                    addBubble("вљ  " + message, false, false);
+                    addBubble("Error: " + message, false, false);
                     setGenerating(false);
                 });
             }
@@ -191,18 +192,18 @@ public class NanoGramAiActivity extends Activity {
     private void stopGenerating() {
         NanoGramAi.getInstance(this).cancel();
         setGenerating(false);
-        addBubble("вЏ№ РћСЃС‚Р°РЅРѕРІР»РµРЅРѕ", false, false);
+        addBubble("Stopped", false, false);
     }
 
     private void setGenerating(boolean on) {
         generating = on;
-        sendButton.setText(on ? "вЏ№" : "вћ¤");
+        sendButton.setText(on ? "Stop" : "Send");
         sendButton.setEnabled(on || inputField.length() > 0);
         sendButton.setAlpha(sendButton.isEnabled() ? 1f : 0.4f);
         sendButton.setTextColor(on ? 0xFFE06060 : 0xFF5288C1);
     }
 
-    /** Р”РѕР±Р°РІР»СЏРµС‚ РїСѓР·С‹СЂСЊ СЃРѕРѕР±С‰РµРЅРёСЏ; true = РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ (СЃРїСЂР°РІР°), false = РР (СЃР»РµРІР°). */
+    /** Adds a message bubble; true = user (right), false = AI (left). */
     private TextView addBubble(String text, boolean mine, boolean streaming) {
         TextView bubble = new TextView(this);
         bubble.setText(text);
@@ -212,7 +213,7 @@ public class NanoGramAiActivity extends Activity {
         bubble.setLineSpacing(dp(2), 1f);
 
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(mine ? 0xFF2B5278 : 0xFF232E3C); // СЃРёРЅРёР№NanoGram / С‚С‘РјРЅС‹Р№
+        bg.setColor(mine ? 0xFF2B5278 : 0xFF232E3C); // NanoGram blue / dark
         bg.setCornerRadius(dp(14));
         bubble.setBackground(bg);
 
