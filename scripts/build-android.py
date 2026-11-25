@@ -59,7 +59,7 @@ def main(argv=None):
         if not isinstance(credentials, dict):
             parser.error('The credential file must contain a JSON object')
         for key in ('TELEGRAM_API_ID', 'TELEGRAM_API_HASH'):
-            value = str(credentials.get(key, '))
+            value = str(credentials.get(key, ''))
             pattern = r'[1-9][0-9]{0,9}' if key.endswith('_ID') else r'[a-fA-F0-9]{32}'
             if not re.fullmatch(pattern, value) or (key.endswith('_ID') and int(value) > 2147483647):
                 parser.error('Invalid or missing ' + key)
