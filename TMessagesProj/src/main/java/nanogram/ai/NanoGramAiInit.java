@@ -37,31 +37,18 @@ import java.util.WeakHashMap;
  * Registered as a ContentProvider in AndroidManifest.xml, so it initializes
  * before any activity starts and requires no edits inside Telegram's own classes.
  *
- * v3 changes:
- *   - ACCOUNT LIMIT: raised to 6 (one phone number = one account). Done via
- *     reflection VERY early (before Telegram's controllers create their
- *     per-account arrays), because MessagesController.java is too large to
- *     rewrite through the API. The patch never lowers an already higher
- *     limit and is fully fail-soft.
+ * v4 changes:
+ *   - OVERLAP FIX: Telegram resets the RecyclerListView's top padding when the
+ *     user switches folders, changes theme, or the list is rebuilt. Previously
+ *     the padding was applied only ONCE (with a tag guard), so after a reset the
+ *     row overlapped the first chat in the list. Now every layout pass re-checks
+ *     the padding and restores it if it is smaller than required.
  *
- * v2 — why the row sometimes never appeared before:
- *   1. The previous version looked up the FIRST RecyclerListView anywhere in the
- *      window. With the bottom navigation bar ("Чаты / Контакты / Настройки /
- *      Профиль") there are several lists and containers, so the row could be
- *      attached to the wrong one (or nowhere at all).
- *   2. It only ran at window resume; coming back from a chat never re-checked.
+ * v3: account limit raised to 6 via reflection before Telegram initializes.
  *
- * v2 approach:
- *   - A global layout listener re-checks on EVERY screen/layout change.
- *   - It scans ALL ActionBarLayout containers (one per bottom-nav tab), finds the
- *      one whose current fragment is DialogsActivity, and pins the row inside
- *      THAT fragment's own view, directly to the dialogs list's parent.
- *   - Position: the bottom edge of the folder tabs strip (FilterTabsView), i.e.
- *      exactly below "Все чаты"/"Личные" — with a geometric fallback.
- *   - The chat list gets extra top padding so the first chat is never hidden.
- *   - GUARANTEED ENTRY POINT: a dynamic launcher shortcut "NanoGram AI" is
- *      registered on every app start. Long-press the app icon -> tap "NanoGram AI"
- *      -> the AI chat opens even if the row fails to attach for any reason.
+ * v2: global layout listener re-checks on EVERY screen/layout change; scans ALL
+ *     ActionBarLayout containers; positions the row below the folder tabs strip;
+ *     guaranteed entry via launcher shortcut.
  *
  * The whole class is fail-soft: every entry point is wrapped in try/catch,
  * so it can never crash or block the app.
@@ -69,7 +56,6 @@ import java.util.WeakHashMap;
 public class NanoGramAiInit extends ContentProvider {
 
     private static final String ROW_TAG = "nanogram_ai_row_tag";
-    private static final String PADDED_TAG = "nanogram_ai_padded";
     private static final String SKIP_TAG = "nanogram_ai_skip_host";
     private static final String SHORTCUT_ID = "nanogram_ai_chat";
     private static final String AI_ACTIVITY = "nanogram.ai.NanoGramAiActivity";
@@ -248,7 +234,8 @@ public class NanoGramAiInit extends ContentProvider {
      * Re-checks the chat list on every layout change of the window.
      * Switching between fragments (chat -> list, settings -> list) does NOT
      * resume the activity, so this listener is what guarantees the AI row
-     * appears as soon as the dialogs list becomes visible again.
+     * appears as soon as the dialogs list becomes visible again — AND that
+     * its padding survives Telegram's internal resets (v4 overlap fix).
      */
     private static void watchLayout(final View decor) {
         try {
@@ -316,10 +303,13 @@ public class NanoGramAiInit extends ContentProvider {
 
         View existing = host.findViewWithTag(ROW_TAG);
         if (existing != null) {
-            // Already pinned: just keep the position fresh (rotation, folder change...).
+            // Already pinned: keep BOTH the position and the list padding fresh on
+            // EVERY layout pass — Telegram resets the padding on folder/theme
+            // changes, which previously made the row overlap the first chat (v4).
             int top = rowTopOffset(host, (ViewGroup) fragmentView, list);
             if (top > 0) {
                 existing.setTranslationY(top);
+                ensureListPadding(host, list, existing, top);
             }
             return;
         }
@@ -329,6 +319,30 @@ public class NanoGramAiInit extends ContentProvider {
             return;
         }
         pinRow(activity, host, list, (ViewGroup) fragmentView);
+    }
+
+    /**
+     * OVERLAP FIX (v4): guarantees the chat list is pushed down far enough so
+     * the first dialog starts BELOW the AI row. Called on every layout pass;
+     * if Telegram has reset the padding (folder switch, theme change, list
+     * rebuild), it is restored immediately. Never shrinks a larger padding.
+     */
+    private static void ensureListPadding(ViewGroup host, View list, View row, int top) {
+        try {
+            if (row.getHeight() <= 0) {
+                return; // row not measured yet
+            }
+            int[] hostLoc = new int[2];
+            int[] listLoc = new int[2];
+            host.getLocationOnScreen(hostLoc);
+            list.getLocationOnScreen(listLoc);
+            int listOffsetInHost = listLoc[1] - hostLoc[1];
+            int needed = top + row.getHeight() - listOffsetInHost;
+            if (needed > 0 && list.getPaddingTop() < needed) {
+                list.setPadding(list.getPaddingLeft(), needed,
+                        list.getPaddingRight(), list.getPaddingBottom());
+            }
+        } catch (Throwable ignored) { }
     }
 
     /** Creates the row and positions it once the layout is measurable. */
@@ -367,18 +381,10 @@ public class NanoGramAiInit extends ContentProvider {
                     }
                     row.setTranslationY(top);
 
-                    if (!PADDED_TAG.equals(list.getTag())) {
-                        list.setTag(PADDED_TAG);
-                        // Push the chat list down so the first dialog starts right below the row.
-                        int[] hostLoc = new int[2];
-                        int[] listLoc = new int[2];
-                        host.getLocationOnScreen(hostLoc);
-                        list.getLocationOnScreen(listLoc);
-                        int listOffsetInHost = listLoc[1] - hostLoc[1];
-                        int newPadTop = Math.max(list.getPaddingTop(), top + height - listOffsetInHost);
-                        list.setPadding(list.getPaddingLeft(), newPadTop,
-                                list.getPaddingRight(), list.getPaddingBottom());
-                    }
+                    // Push the chat list down so the first dialog starts right below
+                    // the row. NOT a one-time action anymore: further layout passes
+                    // (see handleLayout) re-verify and restore this padding.
+                    ensureListPadding(host, list, row, top);
                 } catch (Throwable ignored) { }
             }
         });
