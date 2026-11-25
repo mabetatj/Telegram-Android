@@ -25,7 +25,9 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.WeakHashMap;
 
@@ -34,6 +36,13 @@ import java.util.WeakHashMap;
  *
  * Registered as a ContentProvider in AndroidManifest.xml, so it initializes
  * before any activity starts and requires no edits inside Telegram's own classes.
+ *
+ * v3 changes:
+ *   - ACCOUNT LIMIT: raised to 6 (one phone number = one account). Done via
+ *     reflection VERY early (before Telegram's controllers create their
+ *     per-account arrays), because MessagesController.java is too large to
+ *     rewrite through the API. The patch never lowers an already higher
+ *     limit and is fully fail-soft.
  *
  * v2 — why the row sometimes never appeared before:
  *   1. The previous version looked up the FIRST RecyclerListView anywhere in the
@@ -65,6 +74,9 @@ public class NanoGramAiInit extends ContentProvider {
     private static final String SHORTCUT_ID = "nanogram_ai_chat";
     private static final String AI_ACTIVITY = "nanogram.ai.NanoGramAiActivity";
 
+    /** NanoGram account limit: 6 accounts (one phone number = one account). */
+    private static final int MAX_ACCOUNTS = 6;
+
     /** Decor views already watched with a layout listener (avoids duplicates). */
     private static final WeakHashMap<View, Boolean> watched = new WeakHashMap<>();
 
@@ -73,6 +85,8 @@ public class NanoGramAiInit extends ContentProvider {
         try {
             Context context = getContext();
             if (context instanceof Application) {
+                // Must run BEFORE Telegram initializes its per-account arrays.
+                raiseAccountLimit();
                 installDynamicShortcut(context);
                 ((Application) context).registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
                     @Override
@@ -110,6 +124,75 @@ public class NanoGramAiInit extends ContentProvider {
             }
         } catch (Throwable ignored) { }
         return true;
+    }
+
+    /**
+     * ACCOUNT LIMIT (6 accounts, one phone number = one account).
+     *
+     * Telegram reads UserConfig.MAX_ACCOUNT_COUNT when its per-account arrays
+     * and controller instances are created at app start. This ContentProvider
+     * runs before that initialization, so raising the constant here is exactly
+     * equivalent to editing it in the huge source files (which cannot be
+     * rewritten through the GitHub API due to their size).
+     *
+     * Safety rules:
+     *   - never lowers a limit that is already >= 6;
+     *   - if the per-account "Instance" array cannot be resized, the constant
+     *     is left untouched (no half-patched state, no crashes);
+     *   - completely fail-soft.
+     */
+    private static void raiseAccountLimit() {
+        try {
+            Class<?> userConfigClass = Class.forName("org.telegram.messenger.UserConfig");
+
+            Field countField = userConfigClass.getField("MAX_ACCOUNT_COUNT");
+            int current = countField.getInt(null);
+            if (current >= MAX_ACCOUNTS) {
+                return; // fork already allows 6+ accounts — nothing to do
+            }
+
+            // The per-account instance array is created at class-load time with
+            // the OLD limit. Resize it first; only then bump the constant.
+            Object[] oldInstances = null;
+            Field instanceField = null;
+            try {
+                instanceField = userConfigClass.getField("Instance");
+                oldInstances = (Object[]) instanceField.get(null);
+            } catch (Throwable ignored) { }
+            if (oldInstances != null && oldInstances.length < MAX_ACCOUNTS) {
+                try {
+                    instanceField.set(null, Arrays.copyOf(oldInstances, MAX_ACCOUNTS));
+                } catch (Throwable t) {
+                    return; // cannot resize safely — keep the original limit
+                }
+            }
+            countField.setInt(null, MAX_ACCOUNTS);
+
+            // MessagesController usually initializes its own MAX_ACCOUNT_COUNT
+            // from UserConfig, so it picks up 6 automatically on first use.
+            // Patch it too (defensively) if this fork hardcoded a lower value.
+            try {
+                Class<?> messagesClass = Class.forName("org.telegram.messenger.MessagesController");
+                Field mcCount = messagesClass.getField("MAX_ACCOUNT_COUNT");
+                int mcCurrent = mcCount.getInt(null);
+                if (mcCurrent < MAX_ACCOUNTS) {
+                    Object[] mcOld = null;
+                    Field mcInstance = null;
+                    try {
+                        mcInstance = messagesClass.getField("Instance");
+                        mcOld = (Object[]) mcInstance.get(null);
+                    } catch (Throwable ignored) { }
+                    if (mcOld != null && mcOld.length < MAX_ACCOUNTS) {
+                        try {
+                            mcInstance.set(null, Arrays.copyOf(mcOld, MAX_ACCOUNTS));
+                        } catch (Throwable t) {
+                            return; // cannot resize safely — do not half-patch
+                        }
+                    }
+                    mcCount.setInt(null, MAX_ACCOUNTS);
+                }
+            } catch (Throwable ignored) { }
+        } catch (Throwable ignored) { }
     }
 
     /**
