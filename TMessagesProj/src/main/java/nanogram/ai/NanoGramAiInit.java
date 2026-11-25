@@ -37,6 +37,18 @@ import java.util.WeakHashMap;
  * Registered as a ContentProvider in AndroidManifest.xml, so it initializes
  * before any activity starts and requires no edits inside Telegram's own classes.
  *
+ * v5 changes (anti-flicker, fixes doubling/glitching when scrolling to stories):
+ *   - The AI row is now anchored ONLY below the folder tabs strip. When the strip
+ *     is scrolled out of view (the user pulls the list down to the stories
+ *     section), the row hides immediately instead of jumping between fallback
+ *     positions every layout frame — that jumping was the flicker/doubling.
+ *   - The row position is re-applied only when it actually changes (>= 1px), so
+ *     ordinary scrolling no longer re-triggers view updates on every frame.
+ *   - List padding is only adjusted while the row is visible, which breaks the
+ *     "padding change -> layout -> recompute -> padding change" feedback loop.
+ *     The old geometric fallback (scanning every neighbouring view each frame)
+ *     has been removed — it was the source of the jitter.
+ *
  * v4 changes:
  *   - OVERLAP FIX: Telegram resets the RecyclerListView's top padding when the
  *     user switches folders, changes theme, or the list is rebuilt. Previously
@@ -156,7 +168,7 @@ public class NanoGramAiInit extends ContentProvider {
 
             // MessagesController usually initializes its own MAX_ACCOUNT_COUNT
             // from UserConfig, so it picks up 6 automatically on first use.
-            // Patch it too (defensively) if this fork hardcoded a lower value.
+            // Patch it too (defensively) if this fork hardcodes a lower value.
             try {
                 Class<?> messagesClass = Class.forName("org.telegram.messenger.MessagesController");
                 Field mcCount = messagesClass.getField("MAX_ACCOUNT_COUNT");
@@ -222,7 +234,7 @@ public class NanoGramAiInit extends ContentProvider {
             text.setTypeface(Typeface.DEFAULT_BOLD);
             text.setTextAlign(Paint.Align.CENTER);
             text.setTextSize(size * 0.34f);
-            float baseline = size / 2f - (text.descent() + text.ascent()) / 2f;
+            float baseline = size / 2f - (text.descent() - text.ascent()) / 2f;
             canvas.drawText("AI", size / 2f, baseline, text);
             return bitmap;
         } catch (Throwable ignored) {
@@ -274,7 +286,15 @@ public class NanoGramAiInit extends ContentProvider {
         } catch (Throwable ignored) { }
     }
 
-    /** Pins the row for one ActionBarLayout if it currently shows the dialogs list. */
+    /**
+     * Pins the row for one ActionBarLayout if it currently shows the dialogs list.
+     *
+     * v5 ANTI-FLICKER: the row is anchored ONLY below the folder tabs strip.
+     * While the strip is scrolled out of view (the user pulled the list down to
+     * the stories section) the row hides at once. This removes the per-frame
+     * jumping between fallback positions that users saw as doubling/flicker.
+     * The row position is re-applied only when it really changed (>= 1px).
+     */
     private static void handleLayout(org.telegram.ui.ActionBar.ActionBarLayout layout) {
         org.telegram.ui.ActionBar.BaseFragment fragment = null;
         try {
@@ -303,14 +323,32 @@ public class NanoGramAiInit extends ContentProvider {
 
         View existing = host.findViewWithTag(ROW_TAG);
         if (existing != null) {
-            // Already pinned: keep BOTH the position and the list padding fresh on
-            // EVERY layout pass — Telegram resets the padding on folder/theme
-            // changes, which previously made the row overlap the first chat (v4).
-            int top = rowTopOffset(host, (ViewGroup) fragmentView, list);
-            if (top > 0) {
-                existing.setTranslationY(top);
-                ensureListPadding(host, list, existing, top);
+            // Already pinned: v5 keeps it anchored to the folder tabs strip ONLY.
+            View tabs = findInstanceOf((ViewGroup) fragmentView, org.telegram.ui.Components.FilterTabsView.class);
+            if (tabs == null || tabs.getVisibility() != View.VISIBLE || tabs.getHeight() <= 0) {
+                return; // transient state (strip not measured yet): keep the row as-is
             }
+            int top = rowTopOffset(host, (ViewGroup) fragmentView, list);
+            if (top <= 0) {
+                // The strip is scrolled out of view (stories section pulled down):
+                // hide the row at once instead of letting it jump around.
+                if (existing.getVisibility() == View.VISIBLE) {
+                    existing.setVisibility(View.GONE);
+                }
+                return; // row stays hidden; the list itself is left untouched
+            }
+            if (existing.getVisibility() != View.VISIBLE) {
+                existing.setVisibility(View.VISIBLE);
+            }
+            // v5: move the row only when the computed position really changed;
+            // re-applying the same translation on every scroll frame caused
+            // visible micro-jitter.
+            if (Math.abs(existing.getTranslationY() - top) >= 1f) {
+                existing.setTranslationY(top);
+            }
+            // Telegram resets the list padding on folder/theme changes (v4 fix):
+            // keep re-verifying the padding, but only while the row is visible (v5).
+            ensureListPadding(host, list, existing, top);
             return;
         }
 
@@ -323,9 +361,10 @@ public class NanoGramAiInit extends ContentProvider {
 
     /**
      * OVERLAP FIX (v4): guarantees the chat list is pushed down far enough so
-     * the first dialog starts BELOW the AI row. Called on every layout pass;
-     * if Telegram has reset the padding (folder switch, theme change, list
-     * rebuild), it is restored immediately. Never shrinks a larger padding.
+     * the first dialog starts BELOW the AI row. Called on every layout pass
+     * while the row is visible; if Telegram has reset the padding (folder
+     * switch, theme change, list rebuild), it is restored immediately.
+     * Never shrinks a larger padding.
      */
     private static void ensureListPadding(ViewGroup host, View list, View row, int top) {
         try {
@@ -366,7 +405,7 @@ public class NanoGramAiInit extends ContentProvider {
                         return;
                     }
                     if (top <= 0) {
-                        // Geometry undecipherable in this container: do not overlap the header.
+                        // Geometry unachievable in this container: do not overlap the header.
                         host.setTag(SKIP_TAG);
                         host.removeView(row);
                         return;
@@ -392,62 +431,26 @@ public class NanoGramAiInit extends ContentProvider {
 
     /**
      * Preferred position for the AI row: right below the folder tabs strip
-     * ("Все чаты" / "Личные"). Falls back to the geometric header detection
-     * when the strip is absent or not measured.
+     * ("Все чаты" / "Личные").
+     *
+     * v5: the tabs strip is now the ONLY anchor. The value can be <= 0 while the
+     * strip is scrolled away (stories section) or not measured yet — the caller
+     * decides whether to hide the row or wait. The old geometric fallback that
+     * scanned every neighbouring view on every frame has been removed: it was
+     * the source of the position jumping (flicker/doubling).
      */
     private static int rowTopOffset(ViewGroup host, ViewGroup fragmentView, View list) {
         try {
             View tabs = findInstanceOf(fragmentView, org.telegram.ui.Components.FilterTabsView.class);
-            if (tabs != null && tabs.getHeight() > 0 && tabs.getVisibility() == View.VISIBLE) {
+            if (tabs != null && tabs.getVisibility() == View.VISIBLE && tabs.getHeight() > 0) {
                 int[] hostLoc = new int[2];
                 int[] tabsLoc = new int[2];
                 host.getLocationOnScreen(hostLoc);
                 tabs.getLocationOnScreen(tabsLoc);
-                return Math.max(0, tabsLoc[1] + tabs.getHeight() - hostLoc[1]);
+                return tabsLoc[1] + tabs.getHeight() - hostLoc[1];
             }
         } catch (Throwable ignored) { }
-        return computeTopOffset(host, list);
-    }
-
-    /**
-     * Geometric fallback: the bottom edge of the last "header-like" sibling above
-     * the list (action bar, folder tabs strip). A sibling counts only if it is
-     * visible, short compared to the list (header-height, not a full-screen
-     * overlay), and sits near the top of the list.
-     */
-    private static int computeTopOffset(ViewGroup host, View list) {
-        try {
-            int[] hostLoc = new int[2];
-            int[] listLoc = new int[2];
-            int[] childLoc = new int[2];
-            host.getLocationOnScreen(hostLoc);
-            list.getLocationOnScreen(listLoc);
-
-            int maxBottom = 0;
-            int maxHeight = list.getHeight() > 0 ? Math.max(1, list.getHeight() * 2 / 5) : Integer.MAX_VALUE;
-            int bottomLimit = listLoc[1] + (list.getHeight() > 0 ? list.getHeight() / 3 : 0);
-
-            for (int i = 0; i < host.getChildCount(); i++) {
-                View child = host.getChildAt(i);
-                if (child == list || child.getVisibility() != View.VISIBLE) {
-                    continue;
-                }
-                if (ROW_TAG.equals(child.getTag())) {
-                    continue;
-                }
-                if (child.getHeight() <= 0 || child.getHeight() > maxHeight) {
-                    continue; // skip full-screen overlays and zero-sized views
-                }
-                child.getLocationOnScreen(childLoc);
-                int bottom = childLoc[1] + child.getHeight();
-                if (bottom <= bottomLimit) {
-                    maxBottom = Math.max(maxBottom, bottom);
-                }
-            }
-            return Math.max(0, maxBottom - hostLoc[1]);
-        } catch (Throwable ignored) {
-            return 0;
-        }
+        return 0;
     }
 
     /** Depth-first search for the first view of the given type. */
