@@ -248,3 +248,4 @@ public class NanoGramAiActivity extends Activity {
     private int dp(float v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
     }
+}
