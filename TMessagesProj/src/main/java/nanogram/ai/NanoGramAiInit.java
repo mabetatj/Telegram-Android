@@ -17,20 +17,11 @@ import android.widget.FrameLayout;
 /**
  * Startup hook for the "NanoGram AI" row inside the dialogs list.
  *
- * Registered as a ContentProvider in AndroidManifest.xml (merged at build time
- * by scripts/build-android.py), so it initializes before any activity starts
- * and requires no edits inside Telegram's own classes.
+ * Registered as a ContentProvider in AndroidManifest.xml, so it initializes
+ * before any activity starts and requires no edits inside Telegram's own classes.
  *
- * Important Telegram detail: the chat list is NOT a separate Activity.
- * The whole app runs inside one window (LaunchActivity), and the dialogs
- * screen is a BaseFragment inside ActionBarLayout. So we check the fragment
- * stack (ActionBarLayout.getLastFragmentIncludeMainTabs) to detect when the
- * dialogs screen is visible, then pin the "NanoGram AI" row at the top of the
- * chat list, below the action bar, and push the first chat row down so
- * nothing is hidden.
- *
- * The whole class is fail-soft: every entry point is wrapped in try/catch, so
- * it can never crash or block the app.
+ * The whole class is fail-soft: every entry point is wrapped in try/catch,
+ * so it can never crash or block the app.
  */
 public class NanoGramAiInit extends ContentProvider {
 
@@ -78,7 +69,10 @@ public class NanoGramAiInit extends ContentProvider {
         return true;
     }
 
-    /** Pins the "NanoGram AI" row at the top of the dialogs list, below the action bar. */
+    /**
+     * Pins the "NanoGram AI" row at the top of the dialogs list, below the
+     * action bar AND below the chat folders strip ("Все чаты" / "Личные" tabs).
+     */
     private static void attach(View decor) {
         try {
             View content = decor.findViewById(android.R.id.content);
@@ -116,17 +110,17 @@ public class NanoGramAiInit extends ContentProvider {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
             host.addView(row, params);
 
-            // Place the row right below the action bar, above the first chat row.
-            View bar = findInstanceOf(root, org.telegram.ui.ActionBar.ActionBar.class);
-            if (bar != null && bar.getVisibility() == View.VISIBLE) {
-                row.setTranslationY(Math.max(0f, bar.getTranslationY() + bar.getHeight()));
-            }
-
-            // Push the chat list down so the first dialog is not hidden behind our row.
+            // Compute the top offset so the row sits below BOTH the action bar
+            // and the chat folders strip (folder tabs). This keeps it from
+            // overlapping the "Все чаты" tab strip and keeps the first chat
+            // row fully visible below it.
             row.post(new Runnable() {
                 @Override
                 public void run() {
                     try {
+                        int top = computeTopOffset(root);
+                        row.setTranslationY(top);
+
                         int width = host.getWidth() > 0 ? host.getWidth() : root.getWidth();
                         row.measure(
                                 View.MeasureSpec.makeMeasureSpec(Math.max(1, width), View.MeasureSpec.EXACTLY),
@@ -141,6 +135,44 @@ public class NanoGramAiInit extends ContentProvider {
                 }
             });
         } catch (Throwable ignored) { }
+    }
+
+    /**
+     * Walks the dialogs screen view tree and finds the lowest bottom edge of:
+     * - the ActionBar (title row), and
+     * - the chat folders strip (the horizontal tabs view that contains
+     *   "Все чаты" / "Личные" folder tabs).
+     * The returned offset positions the NanoGram AI row directly below both.
+     */
+    private static int computeTopOffset(ViewGroup root) {
+        int top = 0;
+        try {
+            View bar = findInstanceOf(root, org.telegram.ui.ActionBar.ActionBar.class);
+            if (bar != null && bar.getVisibility() == View.VISIBLE) {
+                top = Math.max(top, bar.getTranslationY() > 0
+                        ? (int) (bar.getTranslationY() + bar.getHeight())
+                        : bar.getHeight());
+            }
+
+            // The folders strip is a ViewPager (folder tabs live inside it) that sits
+            // directly below the action bar on the dialogs screen.
+            View folders = findInstanceOf(root, androidx.viewpager.widget.ViewPager.class);
+            if (folders != null && folders.getVisibility() == View.VISIBLE) {
+                int[] loc = new int[2];
+                folders.getLocationOnScreen(loc);
+                View list = findInstanceOf(root, org.telegram.ui.Components.RecyclerListView.class);
+                if (list != null) {
+                    int[] listLoc = new int[2];
+                    list.getLocationOnScreen(listLoc);
+                    // Only count the pager as the folders strip when it is above
+                    // the dialogs list (i.e. it is the tab strip, not the pages container).
+                    if (loc[1] <= listLoc[1]) {
+                        top = Math.max(top, loc[1] + folders.getHeight() - listLoc[1]);
+                    }
+                }
+            }
+        } catch (Throwable ignored) { }
+        return top;
     }
 
     /** Depth-first search for the first view of the given type. */
