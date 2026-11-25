@@ -6,8 +6,18 @@ import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.Intent;
+import android.content.pm.ShortcutInfo;
+import android.content.pm.ShortcutManager;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Typeface;
+import android.graphics.drawable.Icon;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -16,6 +26,7 @@ import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.WeakHashMap;
 
 /**
@@ -39,9 +50,9 @@ import java.util.WeakHashMap;
  *   - Position: the bottom edge of the folder tabs strip (FilterTabsView), i.e.
  *      exactly below "Все чаты"/"Личные" — with a geometric fallback.
  *   - The chat list gets extra top padding so the first chat is never hidden.
- *   - If geometry can't be resolved after several retries, the row is removed and
- *      the container is marked to avoid endless churn (the launcher shortcut
- *      still guarantees access to the AI chat).
+ *   - GUARANTEED ENTRY POINT: a dynamic launcher shortcut "NanoGram AI" is
+ *      registered on every app start. Long-press the app icon -> tap "NanoGram AI"
+ *      -> the AI chat opens even if the row fails to attach for any reason.
  *
  * The whole class is fail-soft: every entry point is wrapped in try/catch,
  * so it can never crash or block the app.
@@ -51,6 +62,8 @@ public class NanoGramAiInit extends ContentProvider {
     private static final String ROW_TAG = "nanogram_ai_row_tag";
     private static final String PADDED_TAG = "nanogram_ai_padded";
     private static final String SKIP_TAG = "nanogram_ai_skip_host";
+    private static final String SHORTCUT_ID = "nanogram_ai_chat";
+    private static final String AI_ACTIVITY = "nanogram.ai.NanoGramAiActivity";
 
     /** Decor views already watched with a layout listener (avoids duplicates). */
     private static final WeakHashMap<View, Boolean> watched = new WeakHashMap<>();
@@ -60,6 +73,7 @@ public class NanoGramAiInit extends ContentProvider {
         try {
             Context context = getContext();
             if (context instanceof Application) {
+                installDynamicShortcut(context);
                 ((Application) context).registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
                     @Override
                     public void onActivityCreated(Activity activity, Bundle savedInstanceState) { }
@@ -96,6 +110,55 @@ public class NanoGramAiInit extends ContentProvider {
             }
         } catch (Throwable ignored) { }
         return true;
+    }
+
+    /**
+     * GUARANTEED ENTRY POINT (does not depend on the row):
+     * registers a dynamic launcher shortcut, so long-pressing the app icon
+     * always offers "NanoGram AI". Works on API 25+ (minSdk of this build is 33).
+     */
+    private static void installDynamicShortcut(Context context) {
+        try {
+            if (Build.VERSION.SDK_INT < 25) {
+                return;
+            }
+            ShortcutManager sm = context.getSystemService(ShortcutManager.class);
+            if (sm == null) {
+                return;
+            }
+            Intent intent = new Intent(Intent.ACTION_VIEW)
+                    .setClassName(context.getPackageName(), AI_ACTIVITY)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ShortcutInfo info = new ShortcutInfo.Builder(context, SHORTCUT_ID)
+                    .setShortLabel("NanoGram AI")
+                    .setLongLabel("NanoGram AI")
+                    .setIcon(Icon.createWithBitmap(makeAiIconBitmap(context)))
+                    .setIntent(intent)
+                    .build();
+            sm.setDynamicShortcuts(Collections.singletonList(info));
+        } catch (Throwable ignored) { }
+    }
+
+    /** Simple round "AI" icon for the launcher shortcut. */
+    private static Bitmap makeAiIconBitmap(Context context) {
+        try {
+            int size = Math.round(108 * context.getResources().getDisplayMetrics().density);
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            Paint circle = new Paint(Paint.ANTI_ALIAS_FLAG);
+            circle.setColor(0xFF2B5278);
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f, circle);
+            Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+            text.setColor(Color.WHITE);
+            text.setTypeface(Typeface.DEFAULT_BOLD);
+            text.setTextAlign(Paint.Align.CENTER);
+            text.setTextSize(size * 0.34f);
+            float baseline = size / 2f - (text.descent() + text.ascent()) / 2f;
+            canvas.drawText("AI", size / 2f, baseline, text);
+            return bitmap;
+        } catch (Throwable ignored) {
+            return Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888);
+        }
     }
 
     /**
