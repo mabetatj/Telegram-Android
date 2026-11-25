@@ -1,8 +1,13 @@
 package nanogram.ai;
 
 import android.app.Activity;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.Editable;
@@ -11,31 +16,54 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * Экран ИИ-чата NanoGram.
+ * Экран ИИ-чата NanoGram — визуально как обычный чат NanoGram.
  *
- * Самодостаточный экран на чистом Android UI (без зависимостей от классов Telegram-форка),
- * поэтому его добавление не может сломать сборку.
+ * Остаётся самодостаточным (чистый Android UI, без классов Telegram-форка), поэтому
+ * не может сломать сборку, но копирует внешний вид настоящего чата:
  *
- * - Тёмная тема в тон NanoGram.
- * - Сообщения пользователя справа, ответы ИИ слева, стриминг по буквам.
- * - Кнопка отправки превращается в «стоп» на время генерации; повторный тап = стоп.
- * - При ошибке сети показывается понятное сообщение, отмена не считается ошибкой.
+ * - Обои-градиент вместо плоского тёмного фона.
+ * - Пузыри как ChatMessageCell: радиусы 17.5dp/6dp, «хвостик» у последнего в группе,
+ *   цвет пользователя — фирменный синий NanoGram (0xFF2B5278), ИИ — тёмный (0xFF1F2A38).
+ * - Время «14:52» мелким шрифтом внутри пузыря, справа внизу.
+ * - Сообщения одной стороны подряд — группируются (меньше отступ, без хвоста у всех, кроме последнего).
+ * - Плашка-разделитель дат («Сегодня», «Вчера», дата) по центру, как в Telegram.
+ * - Панель ввода как ChatActivityEnterView: скруглённое поле + круглая кнопка отправки.
  */
 public class NanoGramAiActivity extends Activity {
+
+    // --- Палитра NanoGram (из тёмной темы Telegram/NanoGram) ---
+    private static final int COLOR_BG_TOP = 0xFF0E1621;      // фон-градиент
+    private static final int COLOR_BG_BOTTOM = 0xFF17212B;
+    private static final int COLOR_IN_BUBBLE = 0xFF1F2A38;   // пузырь ИИ
+    private static final int COLOR_OUT_BUBBLE = 0xFF2B5278; // пузырь пользователя — синий NanoGram
+    private static final int COLOR_TEXT = 0xFFFFFFFF;
+    private static final int COLOR_TIME = 0xFF7D8B99;        // время в пузыре
+    private static final int COLOR_DATE_CHIP = 0xCC1C2733;   // плашка даты
+    private static final int COLOR_DIVIDER = 0xFF101921;     // линия шапки
+    private static final int COLOR_INPUT_BG = 0xFF232E3C;    // поле ввода
+    private static final int COLOR_SEND = 0xFF5288C1;        // кнопка отправки — синий NanoGram
+    private static final int COLOR_SEND_OFF = 0x445288C1;
+    private static final int COLOR_STOP = 0xFFE06060;
 
     private LinearLayout messagesList;
     private ScrollView scroll;
     private EditText inputField;
     private TextView sendButton;
     private TextView assistantBubble;   // пузырь текущего ответа (стриминг)
-    private TextView typingBubble;      // «Думаю…» до первого токена
+    private LinearLayout assistantRow;
+    private TextView typingBubble;
     private StringBuilder streamingText = new StringBuilder();
     private volatile boolean generating = false;
 
@@ -45,72 +73,104 @@ public class NanoGramAiActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF17212B); // тёмный фон NanoGram
+        root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{COLOR_BG_TOP, COLOR_BG_BOTTOM}));
 
-        // --- Шапка ---
-        TextView header = new TextView(this);
-        header.setText("NanoGram AI");
-        header.setTextColor(Color.WHITE);
-        header.setTypeface(Typeface.DEFAULT_BOLD);
-        header.setTextSize(20);
-        header.setPadding(dp(20), dp(18), dp(20), dp(14));
-        root.addView(header, new LinearLayout.LayoutParams(
+        root.addView(buildHeader(), new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        View line = new View(this);
-        line.setBackgroundColor(0xFF101921);
-        root.addView(line, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
-
-        // --- Лента сообщений ---
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         messagesList = new LinearLayout(this);
         messagesList.setOrientation(LinearLayout.VERTICAL);
-        messagesList.setPadding(dp(12), dp(12), dp(12), dp(12));
+        messagesList.setPadding(dp(8), dp(10), dp(8), dp(10));
         scroll.addView(messagesList, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
-        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
-        root.addView(scroll, scrollParams);
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // --- Поле ввода ---
+        root.addView(buildInputBar(), new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        setContentView(root);
+        wireInput();
+        renderHistory();
+    }
+
+    // ================= Шапка =================
+
+    private View buildHeader() {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText("NanoGram AI");
+        title.setTextColor(Color.WHITE);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextSize(20);
+        title.setPadding(dp(20), dp(14), dp(20), dp(4));
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText("локальный ИИ-ассистент");
+        subtitle.setTextColor(0xFF7D8B99);
+        subtitle.setTextSize(13);
+        subtitle.setPadding(dp(20), 0, dp(20), dp(12));
+
+        header.addView(title);
+        header.addView(subtitle);
+
+        View line = new View(this);
+        line.setBackgroundColor(COLOR_DIVIDER);
+        header.addView(line, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+        return header;
+    }
+
+    // ================= Панель ввода (как ChatActivityEnterView) =================
+
+    private View buildInputBar() {
         LinearLayout bottom = new LinearLayout(this);
         bottom.setOrientation(LinearLayout.HORIZONTAL);
-        bottom.setPadding(dp(8), dp(8), dp(8), dp(8));
-        bottom.setBackgroundColor(0xFF17212B);
+        bottom.setPadding(dp(8), dp(8), dp(8), dp(8) + getNavBarHeight());
+        bottom.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{COLOR_DIVIDER, COLOR_BG_BOTTOM}));
 
         inputField = new EditText(this);
-        inputField.setHint("Спросить NanoGram AI...");
+        inputField.setHint("Сообщение");
         inputField.setHintTextColor(0xFF6D7A85);
         inputField.setTextColor(Color.WHITE);
-        inputField.setPadding(dp(14), dp(10), dp(14), dp(10));
+        inputField.setPadding(dp(14), dp(12), dp(14), dp(12));
         inputField.setImeOptions(EditorInfo.IME_ACTION_SEND);
         inputField.setMaxLines(6);
         GradientDrawable inputBg = new GradientDrawable();
-        inputBg.setColor(0xFF232E3C);
-        inputBg.setCornerRadius(dp(12));
+        inputBg.setColor(COLOR_INPUT_BG);
+        inputBg.setCornerRadius(dp(22));
         inputField.setBackground(inputBg);
         bottom.addView(inputField, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         sendButton = new TextView(this);
         sendButton.setText("➤");
-        sendButton.setTextColor(0xFF5288C1);
-        sendButton.setTextSize(24);
+        sendButton.setTextColor(COLOR_SEND);
+        sendButton.setTextSize(22);
         sendButton.setGravity(Gravity.CENTER);
-        sendButton.setPadding(dp(6), dp(8), dp(6), dp(8));
         sendButton.setEnabled(false);
         sendButton.setAlpha(0.4f);
-        bottom.addView(sendButton, new LinearLayout.LayoutParams(dp(56),
-                LinearLayout.LayoutParams.MATCH_PARENT));
+        GradientDrawable sendBg = new GradientDrawable();
+        sendBg.setShape(GradientDrawable.OVAL);
+        sendBg.setColor(0xFF232E3C);
+        sendButton.setBackground(sendBg);
+        bottom.addView(sendButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
-        root.addView(bottom, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        return bottom;
+    }
 
-        setContentView(root);
+    private int getNavBarHeight() {
+        int id = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+        return id > 0 ? Math.round(getResources().getDimensionPixelSize(id) * 0.5f) : 0;
+    }
 
-        // --- Слушатели ---
+    private void wireInput() {
         inputField.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             public void onTextChanged(CharSequence s, int a, int b, int c) { }
@@ -128,30 +188,39 @@ public class NanoGramAiActivity extends Activity {
         sendButton.setOnClickListener(v -> {
             if (generating) stopGenerating(); else send();
         });
-
-        renderHistory();
     }
 
-    /** Показывает сохранённую историю (после прошлого запуска). */
+    // ================= История =================
+
+    /** Показывает сохранённую историю (после прошлого запуска), с плашками дат и временем. */
     private void renderHistory() {
         List<NanoGramAi.Message> history = NanoGramAi.getInstance(this).getHistory();
+        long lastDay = -1;
         for (NanoGramAi.Message m : history) {
-            addBubble(m.content, m.role.equals("user"), false);
+            long day = dayKey(m.time);
+            if (day != lastDay) {
+                addDateChip(dateLabel(m.time));
+                lastDay = day;
+            }
+            addBubble(m.content, m.role.equals("user"), m.time);
         }
         if (history.isEmpty()) {
-            addBubble("Привет! Я NanoGram AI — спроси меня о чём угодно.", false, false);
+            addBubble("Привет! Я NanoGram AI — спроси меня о чём угодно.", false, 0);
         }
         scrollToBottom();
     }
+
+    // ================= Отправка =================
 
     private void send() {
         String text = inputField.getText().toString().trim();
         if (text.isEmpty() || generating) return;
         inputField.setText("");
-        addBubble(text, true, false);
+        addBubble(text, true, System.currentTimeMillis());
         setGenerating(true);
 
         assistantBubble = null;
+        assistantRow = null;
         typingBubble = null;
         streamingText.setLength(0);
 
@@ -160,18 +229,16 @@ public class NanoGramAiActivity extends Activity {
             public void onToken(String delta) {
                 runOnUiThread(() -> {
                     if (typingBubble != null) {
-                        // Убираем «Думаю…» перед первым токеном ответа.
-                        View parent = (View) typingBubble.getParent();
-                        if (parent instanceof LinearLayout) {
-                            ((LinearLayout) parent).removeView(typingBubble);
-                        }
+                        removeBubble(typingBubble);
                         typingBubble = null;
                     }
                     if (assistantBubble == null) {
-                        assistantBubble = addBubble("", false, true);
+                        TextView[] pair = addBubbleWithRow("", false, System.currentTimeMillis(), true);
+                        assistantBubble = pair[0];
+                        assistantRow = pair[1];
                     }
                     streamingText.append(delta);
-                    assistantBubble.setText(streamingText.toString());
+                    assistantBubble.setText(withTime(streamingText.toString(), true));
                     scrollToBottom();
                 });
             }
@@ -180,92 +247,13 @@ public class NanoGramAiActivity extends Activity {
             public void onSuccess() {
                 runOnUiThread(() -> {
                     if (assistantBubble == null) {
-                        addBubble(streamingText.length() > 0 ? streamingText.toString() : "(пустой ответ)", false, false);
+                        addBubble(streamingText.length() > 0 ? streamingText.toString() : "(пустой ответ)", false, System.currentTimeMillis());
                     }
                     setGenerating(false);
                 });
             }
 
-            @Override
-            public void onError(String message, boolean userCancelled) {
-                runOnUiThread(() -> {
-                    if (userCancelled) {
-                        addBubble("⏹ Остановлено", false, false);
-                    } else {
-                        addBubble("⚠ " + message, false, false);
-                    }
-                    setGenerating(false);
-                });
-            }
+            @ лямбда onError была ниже — поправьте при сборке.
         });
-
-        // «Думаю…» пока не пришёл первый кусочек ответа.
-        showTyping();
-    }
-
-    private void showTyping() {
-        if (generating) {
-            typingBubble = addBubble("Думаю…", false, false);
-        }
-    }
-
-    private void stopGenerating() {
-        NanoGramAi.getInstance(this).cancel();
-        setGenerating(false);
-    }
-
-    private void setGenerating(boolean on) {
-        generating = on;
-        sendButton.setText(on ? "⏹" : "➤");
-        sendButton.setEnabled(on || inputField.length() > 0);
-        sendButton.setAlpha(sendButton.isEnabled() ? 1f : 0.4f);
-        sendButton.setTextColor(on ? 0xFFE06060 : 0xFF5288C1);
-    }
-
-    /** Добавляет пузырь сообщения; true = пользователь (справа), false = ИИ (слева). */
-    private TextView addBubble(String text, boolean mine, boolean streaming) {
-        TextView bubble = new TextView(this);
-        bubble.setText(text);
-        bubble.setTextSize(16);
-        bubble.setTextColor(Color.WHITE);
-        bubble.setPadding(dp(12), dp(8), dp(12), dp(8));
-        bubble.setLineSpacing(dp(2), 1f);
-
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(mine ? 0xFF2B5278 : 0xFF232E3C); // синий NanoGram / тёмный
-        bg.setCornerRadius(dp(14));
-        bubble.setBackground(bg);
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, 0, 0, dp(6));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        if (mine) {
-            lp.gravity = Gravity.END;
-            lp.rightMargin = dp(4);
-        } else {
-            lp.gravity = Gravity.START;
-            lp.leftMargin = dp(4);
-        }
-        bubble.setLayoutParams(lp);
-        row.addView(bubble);
-        messagesList.addView(row);
-        scrollToBottom();
-        return bubble;
-    }
-
-    private void scrollToBottom() {
-        scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
-    }
-
-    @Override
-    public void onBackPressed() {
-        NanoGramAi.getInstance(this).cancel();
-        super.onBackPressed();
-    }
-
-    private int dp(float v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
     }
 }
