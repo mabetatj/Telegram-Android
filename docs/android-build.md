@@ -1,6 +1,6 @@
-# BananaGram Android build credentials
+# NanoGram Android build credentials
 
-BananaGram is an unofficial Telegram client. Its own Telegram application API
+NanoGram is an unofficial Telegram client. Its own Telegram application API
 credentials come from the build environment; do not paste them into `BuildVars.java`.
 
 The repository's Actions secrets are `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
@@ -49,7 +49,7 @@ signed-in accounts. Screenshots and the test log go to `build/banana-smoke`.
 
 The checks workflow does not publish an APK. `release.yml` waits for the checks, uses the existing private signing key, verifies certificate continuity and 16 KiB ELF alignment, then publishes a prerelease with its APK and R8 mapping. The required signing secrets are `BANANAGRAM_RELEASE_KEYSTORE_BASE64`, `BANANAGRAM_RELEASE_STORE_PASSWORD`, `BANANAGRAM_RELEASE_KEY_ALIAS` and `BANANAGRAM_RELEASE_KEY_PASSWORD`. Telegram API credentials are separate from APK signing
 keys, Firebase configuration and store distribution credentials. The upstream
-sample signing key must be replaced before distributing a BananaGram release.
+sample signing key must be replaced before distributing a NanoGram release.
 
 ## Optional test-server capability probe
 
