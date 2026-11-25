@@ -12,7 +12,10 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
+
+import java.util.WeakHashMap;
 
 /**
  * Startup hook for the "NanoGram AI" row inside the dialogs list.
@@ -26,12 +29,23 @@ import android.widget.FrameLayout;
  * chat is never hidden behind the row. No Telegram-internal classes are used
  * for the offset math, so the fix survives upstream layout changes.
  *
+ * FIX: previously the row was only created when the app's window was RESUMED
+ * while the chat list was the visible screen. Telegram restores the last
+ * opened screen on launch (often a chat), so the row was never created and
+ * stayed missing after returning to the list. Now a global layout listener
+ * re-checks on every screen change (back from a chat, from settings, etc.),
+ * so the row appears whenever the chat list is visible. The check is cheap
+ * and idempotent: it early-returns if the row is already on screen.
+ *
  * The whole class is fail-soft: every entry point is wrapped in try/catch,
  * so it can never crash or block the app.
  */
 public class NanoGramAiInit extends ContentProvider {
 
     private static final String ROW_TAG = "nanogram_ai_row_tag";
+
+    /** Decor views already watched with a layout listener (avoids duplicates). */
+    private static final WeakHashMap<View, Boolean> watched = new WeakHashMap<>();
 
     @Override
     public boolean onCreate() {
@@ -53,6 +67,7 @@ public class NanoGramAiInit extends ContentProvider {
                                 @Override
                                 public void run() {
                                     attach(decor);
+                                    watchLayout(decor);
                                 }
                             });
                         } catch (Throwable ignored) { }
@@ -75,6 +90,27 @@ public class NanoGramAiInit extends ContentProvider {
         return true;
     }
 
+    /**
+     * Re-checks the chat list on every layout change of the window.
+     * Switching between fragments (chat -> list, settings -> list) does NOT
+     * resume the activity, so this listener is what guarantees the AI row
+     * appears as soon as the dialogs list becomes visible again.
+     */
+    private static void watchLayout(final View decor) {
+        try {
+            if (watched.containsKey(decor)) {
+                return;
+            }
+            watched.put(decor, Boolean.TRUE);
+            decor.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+                @Override
+                public void onGlobalLayout() {
+                    attach(decor);
+                }
+            });
+        } catch (Throwable ignored) { }
+    }
+
     /** Pins the "NanoGram AI" row below the action bar and the folder tabs, above the first chat row. */
     private static void attach(View decor) {
         try {
@@ -95,7 +131,7 @@ public class NanoGramAiInit extends ContentProvider {
             org.telegram.ui.ActionBar.BaseFragment lastFragment =
                     ((org.telegram.ui.ActionBar.ActionBarLayout) layoutView).getLastFragmentIncludeMainTabs();
             if (!(lastFragment instanceof org.telegram.ui.DialogsActivity)) {
-                return; // the chat list is not the visible screen
+                return; // the chat list is not the visible screen (yet) — the layout listener will retry
             }
 
             View list = findInstanceOf(root, org.telegram.ui.Components.RecyclerListView.class);
@@ -114,6 +150,8 @@ public class NanoGramAiInit extends ContentProvider {
             host.addView(row, params);
 
             row.post(new Runnable() {
+                int attempts = 0;
+
                 @Override
                 public void run() {
                     try {
@@ -143,6 +181,13 @@ public class NanoGramAiInit extends ContentProvider {
                             list.setPadding(list.getPaddingLeft(), newPadTop,
                                     list.getPaddingRight(), list.getPaddingBottom());
                         }
+
+                        // If positions were not measurable yet (top==0 while the list
+                        // itself is laid out lower on screen), retry a few times.
+                        if (top <= 0 && attempts < 5) {
+                            attempts++;
+                            row.postDelayed(this, 200);
+                        }
                     } catch (Throwable ignored) { }
                 }
             });
@@ -161,7 +206,7 @@ public class NanoGramAiInit extends ContentProvider {
         try {
             int[] hostLoc = new int[2];
             int[] listLoc = new int[2];
-            int[] childLoc = new int[2];
+            int[] childLoc = new int[3 - 1];
             host.getLocationOnScreen(hostLoc);
             list.getLocationOnScreen(listLoc);
 
