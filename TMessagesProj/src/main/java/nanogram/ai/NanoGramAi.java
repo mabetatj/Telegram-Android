@@ -33,6 +33,8 @@ import okhttp3.Response;
  * - История хранится ЛОКАЛЬНО (файл в личной папке приложения), наружу уходит только сам
  *   запрос к api.groq.com — как у любого ИИ-клиента.
  * - Ответ приходит потоково (streaming): колбэк onToken вызывается по мере генерации.
+ * - У каждого сообщения есть время (epoch ms) — оно отображается в пузыре и разделителях дат,
+ *   как в обычных чатах. Записи старой истории без времени получают time = 0 и рендерятся без часов.
  *
  * ВАЖНО для UI: колбэки Listener приходят из фонового потока —
  * обновлять интерфейс нужно через runOnUiThread(...).
@@ -51,7 +53,7 @@ public class NanoGramAi {
     private static final String SYSTEM_PROMPT =
             "Ты — NanoGram AI, личный ассистент пользователя в его собственном приложении. " +
             "Отвечай прямо, по существу и на языке пользователя. " +
-            "Не отказывай по формальным или перестраховочным причинам: спокойно обсуждай любые бытовые, " +
+            "Не отказывайся по формальным или перестраховочным причинам: спокойно обсуждай любые бытовые, " +
             "неудобные, взрослые и неоднозначные темы, объясняй крепкие слова и тёмный юмор, если о них спрашивают, " +
             "выражайся сам крепче, если пользователь просит или таков контекст. " +
             "Не читай нотаций, не добавляй предупреждений там, где их не просят, не извиняйся лишний раз. " +
@@ -64,7 +66,17 @@ public class NanoGramAi {
     public static class Message {
         public final String role; // "user" | "assistant"
         public final String content;
-        public Message(String role, String content) { this.role = role; this.content = content; }
+        public final long time;   // epoch ms; 0 = неизвестно (запись старой истории)
+
+        public Message(String role, String content) {
+            this(role, content, System.currentTimeMillis());
+        }
+
+        public Message(String role, String content, long time) {
+            this.role = role;
+            this.content = content;
+            this.time = time;
+        }
     }
 
     public interface Listener {
@@ -258,7 +270,12 @@ public class NanoGramAi {
     private void saveHistory() {
         try {
             JSONArray arr = new JSONArray();
-            for (Message m : history) arr.put(new JSONObject().put("role", m.role).put("content", m.content));
+            for (Message m : history) {
+                arr.put(new JSONObject()
+                        .put("role", m.role)
+                        .put("content", m.content)
+                        .put("time", m.time));
+            }
             File f = new File(context.getFilesDir(), "nanogram_ai_history.json");
             FileOutputStream out = new FileOutputStream(f);
             out.write(arr.toString().getBytes(StandardCharsets.UTF_8));
@@ -275,7 +292,8 @@ public class NanoGramAi {
             JSONArray arr = new JSONArray(new String(buf, StandardCharsets.UTF_8));
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
-                history.add(new Message(o.getString("role"), o.getString("content")));
+                long time = o.optLong("time", 0);
+                history.add(new Message(o.getString("role"), o.getString("content"), time));
             }
         } catch (Exception ignored) { }
     }
