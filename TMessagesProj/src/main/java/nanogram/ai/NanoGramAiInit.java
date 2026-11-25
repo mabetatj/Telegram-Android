@@ -20,6 +20,12 @@ import android.widget.FrameLayout;
  * Registered as a ContentProvider in AndroidManifest.xml, so it initializes
  * before any activity starts and requires no edits inside Telegram's own classes.
  *
+ * The row is positioned geometrically: it is placed directly above the first
+ * visible chat row (i.e. below the action bar AND below the chat folders strip
+ * "Все чаты" / "Личные"), and the list's top padding is increased so the first
+ * chat is never hidden behind the row. No Telegram-internal classes are used
+ * for the offset math, so the fix survives upstream layout changes.
+ *
  * The whole class is fail-soft: every entry point is wrapped in try/catch,
  * so it can never crash or block the app.
  */
@@ -69,10 +75,7 @@ public class NanoGramAiInit extends ContentProvider {
         return true;
     }
 
-    /**
-     * Pins the "NanoGram AI" row at the top of the dialogs list, below the
-     * action bar AND below the chat folders strip ("Все чаты" / "Личные" tabs).
-     */
+    /** Pins the "NanoGram AI" row below the action bar and the folder tabs, above the first chat row. */
     private static void attach(View decor) {
         try {
             View content = decor.findViewById(android.R.id.content);
@@ -110,25 +113,34 @@ public class NanoGramAiInit extends ContentProvider {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
             host.addView(row, params);
 
-            // Compute the top offset so the row sits below BOTH the action bar
-            // and the chat folders strip (folder tabs). This keeps it from
-            // overlapping the "Все чаты" tab strip and keeps the first chat
-            // row fully visible below it.
             row.post(new Runnable() {
                 @Override
                 public void run() {
                     try {
-                        int top = computeTopOffset(root);
-                        row.setTranslationY(top);
-
                         int width = host.getWidth() > 0 ? host.getWidth() : root.getWidth();
                         row.measure(
                                 View.MeasureSpec.makeMeasureSpec(Math.max(1, width), View.MeasureSpec.EXACTLY),
                                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
                         int height = row.getMeasuredHeight();
-                        if (height > 0 && !"nanogram_ai_padded".equals(list.getTag())) {
+                        if (height <= 0) {
+                            return;
+                        }
+
+                        // Where the first chat row currently starts on screen.
+                        int top = computeTopOffset(host, list);
+                        row.setTranslationY(top);
+
+                        if (!"nanogram_ai_padded".equals(list.getTag())) {
                             list.setTag("nanogram_ai_padded");
-                            list.setPadding(list.getPaddingLeft(), list.getPaddingTop() + height,
+                            // Push the chat list down so the first dialog starts right below the row.
+                            int[] hostLoc = new int[2];
+                            int[] listLoc = new int[2];
+                            host.getLocationOnScreen(hostLoc);
+                            list.getLocationOnScreen(listLoc);
+                            int listOffsetInHost = listLoc[1] - hostLoc[1];
+                            int newPadTop = Math.max(list.getPaddingTop(),
+                                    top + height - listOffsetInHost);
+                            list.setPadding(list.getPaddingLeft(), newPadTop,
                                     list.getPaddingRight(), list.getPaddingBottom());
                         }
                     } catch (Throwable ignored) { }
@@ -138,41 +150,46 @@ public class NanoGramAiInit extends ContentProvider {
     }
 
     /**
-     * Walks the dialogs screen view tree and finds the lowest bottom edge of:
-     * - the ActionBar (title row), and
-     * - the chat folders strip (the horizontal tabs view that contains
-     *   "Все чаты" / "Личные" folder tabs).
-     * The returned offset positions the NanoGram AI row directly below both.
+     * Geometric top offset inside `host` for the AI row: the bottom edge of the
+     * last "header-like" sibling above the list (action bar, folder tabs strip).
+     * A sibling counts only if it is visible, short compared to the list
+     * (header-height, not a full-screen overlay), and sits near the top of the
+     * list. This reliably finds the folder tabs strip without depending on
+     * Telegram-internal view classes.
      */
-    private static int computeTopOffset(ViewGroup root) {
-        int top = 0;
+    private static int computeTopOffset(ViewGroup host, View list) {
         try {
-            View bar = findInstanceOf(root, org.telegram.ui.ActionBar.ActionBar.class);
-            if (bar != null && bar.getVisibility() == View.VISIBLE) {
-                top = Math.max(top, bar.getTranslationY() > 0
-                        ? (int) (bar.getTranslationY() + bar.getHeight())
-                        : bar.getHeight());
-            }
+            int[] hostLoc = new int[2];
+            int[] listLoc = new int[2];
+            int[] childLoc = new int[2];
+            host.getLocationOnScreen(hostLoc);
+            list.getLocationOnScreen(listLoc);
 
-            // The folders strip is a ViewPager (folder tabs live inside it) that sits
-            // directly below the action bar on the dialogs screen.
-            View folders = findInstanceOf(root, androidx.viewpager.widget.ViewPager.class);
-            if (folders != null && folders.getVisibility() == View.VISIBLE) {
-                int[] loc = new int[2];
-                folders.getLocationOnScreen(loc);
-                View list = findInstanceOf(root, org.telegram.ui.Components.RecyclerListView.class);
-                if (list != null) {
-                    int[] listLoc = new int[2];
-                    list.getLocationOnScreen(listLoc);
-                    // Only count the pager as the folders strip when it is above
-                    // the dialogs list (i.e. it is the tab strip, not the pages container).
-                    if (loc[1] <= listLoc[1]) {
-                        top = Math.max(top, loc[1] + folders.getHeight() - listLoc[1]);
-                    }
+            int maxBottom = 0;
+            int maxHeight = list.getHeight() > 0 ? Math.max(1, list.getHeight() * 2 / 5) : Integer.MAX_VALUE;
+            int bottomLimit = listLoc[1] + (list.getHeight() > 0 ? list.getHeight() / 3 : 0);
+
+            for (int i = 0; i < host.getChildCount(); i++) {
+                View child = host.getChildAt(i);
+                if (child == list || child.getVisibility() != View.VISIBLE) {
+                    continue;
+                }
+                if (ROW_TAG.equals(child.getTag())) {
+                    continue;
+                }
+                if (child.getHeight() <= 0 || child.getHeight() > maxHeight) {
+                    continue; // skip full-screen overlays and zero-sized views
+                }
+                child.getLocationOnScreen(childLoc);
+                int bottom = childLoc[1] + child.getHeight();
+                if (bottom <= bottomLimit) {
+                    maxBottom = Math.max(maxBottom, bottom);
                 }
             }
-        } catch (Throwable ignored) { }
-        return top;
+            return Math.max(0, maxBottom - hostLoc[1]);
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     /** Depth-first search for the first view of the given type. */
