@@ -1,8 +1,8 @@
-# 🍌 BananaGram for Android
+# Nano for Android
 
 **An unofficial Telegram client with more control over your conversations.**
 
-BananaGram brings together our [iOS client](https://github.com/decoder-dev/Telegram-iOS), Telegram for Android and features from AyuGram: configurable Ghost Mode, message history, filters and extra sending tools.
+NanoGram brings together our [iOS client](https://github.com/decoder-dev/Telegram-iOS), Telegram for Android and features from AyuGram: configurable Ghost Mode, message history, filters and extra sending tools.
 
 [Android source](https://github.com/decoder-dev/Telegram-Android) · [iOS source](https://github.com/decoder-dev/Telegram-iOS) · [Issues](https://github.com/decoder-dev/Telegram-Android/issues) · [Releases](https://github.com/decoder-dev/Telegram-Android/releases)
 
