@@ -300,7 +300,7 @@ public class NanoGramAiActivity extends Activity {
     // Поле ввода и отправка
     // ------------------------------------------------------------------
 
-    private View buildInputBar() {
+    private LinearLayout buildInputBar() {
         LinearLayout bottom = new LinearLayout(this);
         bottom.setOrientation(LinearLayout.HORIZONTAL);
         bottom.setGravity(Gravity.CENTER_VERTICAL);
