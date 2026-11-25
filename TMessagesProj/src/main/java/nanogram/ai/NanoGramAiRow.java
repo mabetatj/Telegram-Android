@@ -3,6 +3,7 @@ package nanogram.ai;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.TypedArray;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -14,18 +15,18 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /**
- * РЎС‚СЂРѕРєР° "NanoGram AI" РІРІРµСЂС…Сѓ СЃРїРёСЃРєР° РґРёР°Р»РѕРіРѕРІ.
+ * Строка "NanoGram AI" вверху списка диалогов.
  *
- * РњРѕРґСѓР»СЊ 3: СЃР°РјРѕРґРѕСЃС‚Р°С‚РѕС‡РЅС‹Р№ РєР»Р°СЃСЃ РЅР° С‡РёСЃС‚РѕРј Android UI (Р±РµР· Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№ РѕС‚ РєР»Р°СЃСЃРѕРІ Telegram-С„РѕСЂРєР°),
- * РїРѕСЌС‚РѕРјСѓ РµРіРѕ РґРѕР±Р°РІР»РµРЅРёРµ РЅРµ РјРѕР¶РµС‚ СЃР»РѕРјР°С‚СЊ СЃР±РѕСЂРєСѓ. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РёР· DialogsActivity (РњРѕРґСѓР»СЊ 4).
+ * Самодостаточный класс на чистом Android UI (без зависимостей от классов Telegram-форка),
+ * поэтому его добавление не может сломать сборку. Используется из NanoGramAiInit.
  *
- * - РљСЂСѓРіР»Р°СЏ РёРєРѕРЅРєР° "AI" + РЅР°Р·РІР°РЅРёРµ "NanoGram AI" + РїРѕРґР·Р°РіРѕР»РѕРІРѕРє.
- * - РўР°Рї РїРѕ СЃС‚СЂРѕРєРµ РѕС‚РєСЂС‹РІР°РµС‚ NanoGramAiActivity.
- * - Р•РґРёРЅСЃС‚РІРµРЅРЅС‹Р№ РїСѓР±Р»РёС‡РЅС‹Р№ РјРµС‚РѕРґ: NanoGramAiRow.create(activity) вЂ” РІРѕР·РІСЂР°С‰Р°РµС‚ РіРѕС‚РѕРІСѓСЋ View.
+ * - Круглая иконка "AI" + название "NanoGram AI" + подзаголовок.
+ * - Тап по строке открывает NanoGramAiActivity.
+ * - Единственный публичный метод: NanoGramAiRow.create(activity) — возвращает готовую View.
  */
 public class NanoGramAiRow {
 
-    /** РЎРѕР·РґР°С‘С‚ СЃС‚СЂРѕРєСѓ "NanoGram AI"; РІРµС€Р°РµС‚ РЅР° РЅРµС‘ РѕР±СЂР°Р±РѕС‚С‡РёРє РѕС‚РєСЂС‹С‚РёСЏ СЌРєСЂР°РЅР° С‡Р°С‚Р°. */
+    /** Создаёт строку "NanoGram AI"; вешает на неё обработчик открытия экрана ИИ-чата. */
     public static View create(final Activity activity) {
         Context context = activity;
 
@@ -33,10 +34,15 @@ public class NanoGramAiRow {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8));
-        row.setLayoutParams(new ViewGroup.MarginLayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // --- РљСЂСѓРіР»Р°СЏ РёРєРѕРЅРєР° "AI" ---
+        // Нормальная подсветка при нажатии — как у остальных строк списка.
+        try {
+            TypedArray ta = context.obtainStyledAttributes(new int[]{android.R.attr.selectableItemBackground});
+            row.setBackground(ta.getDrawable(0));
+            ta.recycle();
+        } catch (Throwable ignored) { }
+
+        // --- Круглая иконка "AI" ---
         TextView avatar = new TextView(context);
         avatar.setText("AI");
         avatar.setTextColor(Color.WHITE);
@@ -45,11 +51,11 @@ public class NanoGramAiRow {
         avatar.setGravity(Gravity.CENTER);
         GradientDrawable avatarBg = new GradientDrawable();
         avatarBg.setShape(GradientDrawable.OVAL);
-        avatarBg.setColor(0xFF2B5278); // СЃРёРЅРёР№ NanoGram
+        avatarBg.setColor(0xFF2B5278); // синий NanoGram
         avatar.setBackground(avatarBg);
         row.addView(avatar, new LinearLayout.LayoutParams(dp(context, 46), dp(context, 46)));
 
-        // --- РўРµРєСЃС‚: РЅР°Р·РІР°РЅРёРµ + РїРѕРґР·Р°РіРѕР»РѕРІРѕРє ---
+        // --- Текст: название + подзаголовок ---
         LinearLayout texts = new LinearLayout(context);
         texts.setOrientation(LinearLayout.VERTICAL);
         texts.setPadding(dp(context, 14), 0, 0, 0);
@@ -62,7 +68,7 @@ public class NanoGramAiRow {
         texts.addView(title);
 
         TextView subtitle = new TextView(context);
-        subtitle.setText("Р›РѕРєР°Р»СЊРЅС‹Р№ РР-Р°СЃСЃРёСЃС‚РµРЅС‚");
+        subtitle.setText("Локальный ИИ-ассистент");
         subtitle.setTextColor(0xFF6D7A85);
         subtitle.setTextSize(14);
         texts.addView(subtitle);
@@ -70,7 +76,7 @@ public class NanoGramAiRow {
         row.addView(texts, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        // --- РўР°Рї: РѕС‚РєСЂС‹С‚СЊ СЌРєСЂР°РЅ РР-С‡Р°С‚Р° ---
+        // --- Тап: открыть экран ИИ-чата ---
         row.setOnClickListener(v -> {
             try {
                 Intent intent = new Intent(context, NanoGramAiActivity.class);
@@ -81,7 +87,7 @@ public class NanoGramAiRow {
         return row;
     }
 
-    /** РљРѕРЅС‚РµР№РЅРµСЂ СЃ РіРѕСЂРёР·РѕРЅС‚Р°Р»СЊРЅРѕР№ РїРѕР»РѕСЃРєРѕР№-СЂР°Р·РґРµР»РёС‚РµР»РµРј вЂ” СѓРґРѕР±РЅРѕ РІСЃС‚Р°РІРёС‚СЊ РїРµСЂРІРѕР№ СЃС‚СЂРѕРєРѕР№ РІ СЃРїРёСЃРѕРє. */
+    /** Контейнер с горизонтальной полоской-разделителем — удобно вставить первой строкой в список. */
     public static View createWithDivider(Activity activity) {
         FrameLayout container = new FrameLayout(activity);
         container.addView(create(activity), new FrameLayout.LayoutParams(
