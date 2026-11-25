@@ -9,9 +9,10 @@ Also applies patches before the Gradle build:
    verified at patch time; the build fails loudly if they disappear so a broken APK
    is never shipped silently.
 
-2. NanoGram rename patch: the launcher label and in-app name are renamed from
-   BananaGram to NanoGram in every localized strings.xml, so the fork carries its
-   own name everywhere the user can see it.
+2. NanoGram rename patch: BananaGram is renamed to NanoGram everywhere the user
+   can see it - the launcher label and in-app name in every localized strings.xml,
+   and the header title string exteraAppName in every localized extera.xml. The
+   chat-list header defaults to showing the app name instead of the account name.
 """
 import argparse
 import json
@@ -30,6 +31,10 @@ PROVIDER_LINE = ('        <provider\n'
 RESOURCES_DIR = Path('TMessagesProj/src/main/res')
 OLD_NAME = 'BananaGram'
 NEW_NAME = 'NanoGram'
+
+EXTERA_CONFIG_PATH = Path('TMessagesProj/src/main/java/com/exteragram/messenger/ExteraConfig.java')
+TITLE_OLD = 'preferences.getInt("titleText", 2)'
+TITLE_NEW = 'preferences.getInt("titleText", 0)'
 
 
 def patch_manifest(root):
@@ -51,12 +56,18 @@ def patch_manifest(root):
 
 
 def patch_resources(root):
-    """Rename BananaGram to NanoGram in every localized strings.xml."""
+    """Rename BananaGram to NanoGram in every localized strings.xml and extera.xml.
+
+    strings.xml carries the launcher label (AppName/AppNameBeta); extera.xml carries
+    exteraAppName, which is what the chat-list header shows when the title mode is
+    set to the app name.
+    """
     res = root / RESOURCES_DIR
     if not res.is_dir():
         raise SystemExit('nanogram: resources directory not found; aborting build.')
+    targets = sorted(set(res.glob('values*/strings.xml')) | set(res.glob('values*/extera.xml')))
     patched = 0
-    for path in sorted(res.glob('values*/strings.xml')):
+    for path in targets:
         text = path.read_text(encoding='utf-8')
         if OLD_NAME not in text:
             continue
@@ -65,13 +76,34 @@ def patch_resources(root):
         path.write_text(text, encoding='utf-8')
         patched += 1
         print('nanogram: renamed %s to %s in %s' % (OLD_NAME, NEW_NAME, path.relative_to(root)))
-    remaining = sum(1 for path in res.glob('values*/strings.xml') if OLD_NAME in path.read_text(encoding='utf-8'))
+    remaining = sum(1 for path in targets if OLD_NAME in path.read_text(encoding='utf-8'))
     if remaining:
-        raise SystemExit('nanogram: %d strings.xml files still contain %s; aborting build.' % (remaining, OLD_NAME))
+        raise SystemExit('nanogram: %d resource files still contain %s; aborting build.' % (remaining, OLD_NAME))
     if patched == 0:
         print('nanogram: no BananaGram strings found in resources (already renamed)')
     else:
-        print('nanogram: renamed in %d strings.xml file(s)' % patched)
+        print('nanogram: renamed in %d resource file(s)' % patched)
+
+
+def patch_header_title(root):
+    """Default the chat-list header to the app name instead of the account name.
+
+    ExteraConfig.titleText modes: 0 = app name, 1 = username, 2 = first name,
+    3 = "Chats". The upstream default 2 shows the account name in the header;
+    NanoGram as a personal fork defaults to showing its own name.
+    """
+    path = root / EXTERA_CONFIG_PATH
+    if not path.is_file():
+        raise SystemExit('nanogram: ExteraConfig.java not found; aborting build.')
+    text = path.read_text(encoding='utf-8')
+    if TITLE_NEW in text:
+        print('nanogram: header title already defaults to the app name')
+        return
+    if TITLE_OLD not in text:
+        raise SystemExit('nanogram: titleText default not found in ExteraConfig.java; aborting build.')
+    text = text.replace(TITLE_OLD, TITLE_NEW)
+    path.write_text(text, encoding='utf-8')
+    print('nanogram: chat-list header now defaults to the app name (NanoGram)')
 
 
 def main(argv=None):
@@ -82,6 +114,7 @@ def main(argv=None):
     root = Path(__file__).resolve().parents[1]
     patch_manifest(root)
     patch_resources(root)
+    patch_header_title(root)
     env = dict(os.environ)
     if args.credentials_file:
         try:
