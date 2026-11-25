@@ -80,6 +80,17 @@ jobs:
           grep -q 'APP_DISPLAY_NAME = "NanoGram"' "$F"
           
 
+      - name: Prepare NanoGram AI (Groq key + shortcut export)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          test -n "$GROQ_API_KEY"
+          mkdir -p TMessagesProj/src/main/assets/nanogram
+          printf '%s' "$GROQ_API_KEY" > TMessagesProj/src/main/assets/nanogram/ai_key.txt
+          M="TMessagesProj/src/main/AndroidManifest.xml"
+          sed -i '/nanogram.ai.NanoGramAiActivity/{n;s/android:exported="false"/android:exported="true"/}' "$M"
+          grep -A1 'nanogram.ai.NanoGramAiActivity' "$M" | grep -q 'android:exported="true"'
+
       - name: Prepare ccache
         run: |
           if ! command -v ccache >/dev/null; then
