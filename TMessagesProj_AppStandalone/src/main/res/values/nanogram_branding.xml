@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    NanoGram branding override for the standalone APK module.
+
+    The TMessagesProj library (BananaGram fork) defines
+        <string name="AppName">BananaGram</string>
+    and the premium / settings screens read @string/AppName, which is why
+    "BananaGram" appeared after enabling Telegram Premium even though the CI
+    patches AyuConstants.APP_DISPLAY_NAME.
+
+    Android resource merging: a resource defined in the APP module overrides
+    the same-named resource from a LIBRARY module. This file lives in the
+    AppStandalone application module, so every screen that uses @string/AppName
+    (launcher label, premium screen, settings, about) shows "NanoGram" instead.
+    The giant library strings.xml is intentionally NOT edited.
+-->
+<resources>
+    <string name="AppName">NanoGram</string>
+    <string name="AppNameBeta">NanoGram Beta</string>
+</resources>
