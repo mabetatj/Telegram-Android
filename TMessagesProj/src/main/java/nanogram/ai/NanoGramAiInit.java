@@ -19,10 +19,15 @@ import android.widget.FrameLayout;
  *
  * Registered as a ContentProvider in AndroidManifest.xml (merged at build time
  * by scripts/build-android.py), so it initializes before any activity starts
- * and requires no edits inside Telegram's own classes. Every time the dialogs
- * screen (the chat list) comes to the foreground, it pins the "NanoGram AI"
- * row at the top of the chat list, right below the action bar, and pushes the
- * first chat row down so nothing is hidden.
+ * and requires no edits inside Telegram's own classes.
+ *
+ * Important Telegram detail: the chat list is NOT a separate Activity.
+ * The whole app runs inside one window (LaunchActivity), and the dialogs
+ * screen is a BaseFragment inside ActionBarLayout. So we check the fragment
+ * stack (ActionBarLayout.getLastFragmentIncludeMainTabs) to detect when the
+ * dialogs screen is visible, then pin the "NanoGram AI" row at the top of the
+ * chat list, below the action bar, and push the first chat row down so
+ * nothing is hidden.
  *
  * The whole class is fail-soft: every entry point is wrapped in try/catch, so
  * it can never crash or block the app.
@@ -46,15 +51,13 @@ public class NanoGramAiInit extends ContentProvider {
                     @Override
                     public void onActivityResumed(final Activity activity) {
                         try {
-                            if (activity instanceof org.telegram.ui.DialogsActivity) {
-                                final View decor = activity.getWindow().getDecorView();
-                                decor.post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        attach(decor);
-                                    }
-                                });
-                            }
+                            final View decor = activity.getWindow().getDecorView();
+                            decor.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    attach(decor);
+                                }
+                            });
                         } catch (Throwable ignored) { }
                     }
 
@@ -86,6 +89,18 @@ public class NanoGramAiInit extends ContentProvider {
             if (root.findViewWithTag(ROW_TAG) != null) {
                 return; // already attached on this screen
             }
+
+            // Telegram: the dialogs list is a fragment inside ActionBarLayout, not an Activity.
+            View layoutView = findInstanceOf(root, org.telegram.ui.ActionBar.ActionBarLayout.class);
+            if (!(layoutView instanceof org.telegram.ui.ActionBar.ActionBarLayout)) {
+                return;
+            }
+            org.telegram.ui.ActionBar.BaseFragment lastFragment =
+                    ((org.telegram.ui.ActionBar.ActionBarLayout) layoutView).getLastFragmentIncludeMainTabs();
+            if (!(lastFragment instanceof org.telegram.ui.DialogsActivity)) {
+                return; // the chat list is not the visible screen
+            }
+
             View list = findInstanceOf(root, org.telegram.ui.Components.RecyclerListView.class);
             if (list == null || !(list.getParent() instanceof ViewGroup)) {
                 return;
