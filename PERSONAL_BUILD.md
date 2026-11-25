@@ -1,3 +1,3 @@
 # Personal build notes
 
-Branch for the personal BananaGram APK build.
+Branch for the personal NanoGram APK build.
