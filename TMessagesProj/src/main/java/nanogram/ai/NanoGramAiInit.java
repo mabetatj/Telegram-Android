@@ -15,6 +15,7 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 
+import java.util.ArrayList;
 import java.util.WeakHashMap;
 
 /**
@@ -23,19 +24,24 @@ import java.util.WeakHashMap;
  * Registered as a ContentProvider in AndroidManifest.xml, so it initializes
  * before any activity starts and requires no edits inside Telegram's own classes.
  *
- * The row is positioned geometrically: it is placed directly above the first
- * visible chat row (i.e. below the action bar AND below the chat folders strip
- * "Все чаты" / "Личные"), and the list's top padding is increased so the first
- * chat is never hidden behind the row. No Telegram-internal classes are used
- * for the offset math, so the fix survives upstream layout changes.
+ * v2 — why the row sometimes never appeared before:
+ *   1. The previous version looked up the FIRST RecyclerListView anywhere in the
+ *      window. With the bottom navigation bar ("Чаты / Контакты / Настройки /
+ *      Профиль") there are several lists and containers, so the row could be
+ *      attached to the wrong one (or nowhere at all).
+ *   2. It only ran at window resume; coming back from a chat never re-checked.
  *
- * FIX: previously the row was only created when the app's window was RESUMED
- * while the chat list was the visible screen. Telegram restores the last
- * opened screen on launch (often a chat), so the row was never created and
- * stayed missing after returning to the list. Now a global layout listener
- * re-checks on every screen change (back from a chat, from settings, etc.),
- * so the row appears whenever the chat list is visible. The check is cheap
- * and idempotent: it early-returns if the row is already on screen.
+ * v2 approach:
+ *   - A global layout listener re-checks on EVERY screen/layout change.
+ *   - It scans ALL ActionBarLayout containers (one per bottom-nav tab), finds the
+ *      one whose current fragment is DialogsActivity, and pins the row inside
+ *      THAT fragment's own view, directly to the dialogs list's parent.
+ *   - Position: the bottom edge of the folder tabs strip (FilterTabsView), i.e.
+ *      exactly below "Все чаты"/"Личные" — with a geometric fallback.
+ *   - The chat list gets extra top padding so the first chat is never hidden.
+ *   - If geometry can't be resolved after several retries, the row is removed and
+ *      the container is marked to avoid endless churn (the launcher shortcut
+ *      still guarantees access to the AI chat).
  *
  * The whole class is fail-soft: every entry point is wrapped in try/catch,
  * so it can never crash or block the app.
@@ -43,6 +49,8 @@ import java.util.WeakHashMap;
 public class NanoGramAiInit extends ContentProvider {
 
     private static final String ROW_TAG = "nanogram_ai_row_tag";
+    private static final String PADDED_TAG = "nanogram_ai_padded";
+    private static final String SKIP_TAG = "nanogram_ai_skip_host";
 
     /** Decor views already watched with a layout listener (avoids duplicates). */
     private static final WeakHashMap<View, Boolean> watched = new WeakHashMap<>();
@@ -98,10 +106,12 @@ public class NanoGramAiInit extends ContentProvider {
      */
     private static void watchLayout(final View decor) {
         try {
-            if (watched.containsKey(decor)) {
-                return;
+            synchronized (watched) {
+                if (watched.containsKey(decor)) {
+                    return;
+                }
+                watched.put(decor, Boolean.TRUE);
             }
-            watched.put(decor, Boolean.TRUE);
             decor.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
                 @Override
                 public void onGlobalLayout() {
@@ -111,102 +121,153 @@ public class NanoGramAiInit extends ContentProvider {
         } catch (Throwable ignored) { }
     }
 
-    /** Pins the "NanoGram AI" row below the action bar and the folder tabs, above the first chat row. */
+    /** Finds every dialogs list currently on screen and pins/repositions the AI row in each. */
     private static void attach(View decor) {
         try {
             View content = decor.findViewById(android.R.id.content);
             if (!(content instanceof ViewGroup)) {
                 return;
             }
-            final ViewGroup root = (ViewGroup) content;
-            if (root.findViewWithTag(ROW_TAG) != null) {
-                return; // already attached on this screen
+            ViewGroup root = (ViewGroup) content;
+
+            ArrayList<org.telegram.ui.ActionBar.ActionBarLayout> layouts =
+                    findAllInstanceOf(root, org.telegram.ui.ActionBar.ActionBarLayout.class);
+            for (int k = 0; k < layouts.size(); k++) {
+                org.telegram.ui.ActionBar.ActionBarLayout layout = layouts.get(k);
+                try {
+                    handleLayout(layout);
+                } catch (Throwable ignored) { }
             }
-
-            // Telegram: the dialogs list is a fragment inside ActionBarLayout, not an Activity.
-            View layoutView = findInstanceOf(root, org.telegram.ui.ActionBar.ActionBarLayout.class);
-            if (!(layoutView instanceof org.telegram.ui.ActionBar.ActionBarLayout)) {
-                return;
-            }
-            org.telegram.ui.ActionBar.BaseFragment lastFragment =
-                    ((org.telegram.ui.ActionBar.ActionBarLayout) layoutView).getLastFragmentIncludeMainTabs();
-            if (!(lastFragment instanceof org.telegram.ui.DialogsActivity)) {
-                return; // the chat list is not the visible screen (yet) — the layout listener will retry
-            }
-
-            View list = findInstanceOf(root, org.telegram.ui.Components.RecyclerListView.class);
-            if (list == null || !(list.getParent() instanceof ViewGroup)) {
-                return;
-            }
-            Activity activity = findActivity(root);
-            if (activity == null) {
-                return;
-            }
-            final ViewGroup host = (ViewGroup) list.getParent();
-            final View row = NanoGramAiRow.createWithDivider(activity);
-            row.setTag(ROW_TAG);
-            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
-            host.addView(row, params);
-
-            row.post(new Runnable() {
-                int attempts = 0;
-
-                @Override
-                public void run() {
-                    try {
-                        int width = host.getWidth() > 0 ? host.getWidth() : root.getWidth();
-                        row.measure(
-                                View.MeasureSpec.makeMeasureSpec(Math.max(1, width), View.MeasureSpec.EXACTLY),
-                                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-                        int height = row.getMeasuredHeight();
-                        if (height <= 0) {
-                            return;
-                        }
-
-                        // Where the first chat row currently starts on screen.
-                        int top = computeTopOffset(host, list);
-                        row.setTranslationY(top);
-
-                        if (!"nanogram_ai_padded".equals(list.getTag())) {
-                            list.setTag("nanogram_ai_padded");
-                            // Push the chat list down so the first dialog starts right below the row.
-                            int[] hostLoc = new int[2];
-                            int[] listLoc = new int[2];
-                            host.getLocationOnScreen(hostLoc);
-                            list.getLocationOnScreen(listLoc);
-                            int listOffsetInHost = listLoc[1] - hostLoc[1];
-                            int newPadTop = Math.max(list.getPaddingTop(),
-                                    top + height - listOffsetInHost);
-                            list.setPadding(list.getPaddingLeft(), newPadTop,
-                                    list.getPaddingRight(), list.getPaddingBottom());
-                        }
-
-                        // If positions were not measurable yet (top==0 while the list
-                        // itself is laid out lower on screen), retry a few times.
-                        if (top <= 0 && attempts < 5) {
-                            attempts++;
-                            row.postDelayed(this, 200);
-                        }
-                    } catch (Throwable ignored) { }
-                }
-            });
         } catch (Throwable ignored) { }
     }
 
+    /** Pins the row for one ActionBarLayout if it currently shows the dialogs list. */
+    private static void handleLayout(org.telegram.ui.ActionBar.ActionBarLayout layout) {
+        org.telegram.ui.ActionBar.BaseFragment fragment = null;
+        try {
+            fragment = layout.getLastFragmentIncludeMainTabs();
+        } catch (Throwable ignored) { }
+        if (!(fragment instanceof org.telegram.ui.DialogsActivity)) {
+            return; // this container does not show the chat list right now
+        }
+
+        View fragmentView = null;
+        try {
+            fragmentView = fragment.getFragmentView();
+        } catch (Throwable ignored) { }
+        if (!(fragmentView instanceof ViewGroup)) {
+            return;
+        }
+
+        View list = findInstanceOf((ViewGroup) fragmentView, org.telegram.ui.Components.RecyclerListView.class);
+        if (list == null || !(list.getParent() instanceof ViewGroup)) {
+            return;
+        }
+        final ViewGroup host = (ViewGroup) list.getParent();
+        if (SKIP_TAG.equals(host.getTag())) {
+            return; // geometry could not be resolved here earlier; shortcut still gives access
+        }
+
+        View existing = host.findViewWithTag(ROW_TAG);
+        if (existing != null) {
+            // Already pinned: just keep the position fresh (rotation, folder change...).
+            int top = rowTopOffset(host, (ViewGroup) fragmentView, list);
+            if (top > 0) {
+                existing.setTranslationY(top);
+            }
+            return;
+        }
+
+        Activity activity = findActivity(fragmentView);
+        if (activity == null) {
+            return;
+        }
+        pinRow(activity, host, list, (ViewGroup) fragmentView);
+    }
+
+    /** Creates the row and positions it once the layout is measurable. */
+    private static void pinRow(Activity activity, final ViewGroup host, final View list, final ViewGroup fragmentView) {
+        final View row = NanoGramAiRow.createWithDivider(activity);
+        row.setTag(ROW_TAG);
+        host.addView(row, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+
+        row.post(new Runnable() {
+            int attempts = 0;
+
+            @Override
+            public void run() {
+                try {
+                    int top = rowTopOffset(host, fragmentView, list);
+                    if (attempts < 12 && (host.getWidth() <= 0 || list.getHeight() <= 0 || top <= 0)) {
+                        // Layout not ready yet (folders strip not measured) — retry shortly.
+                        attempts++;
+                        row.postDelayed(this, 250);
+                        return;
+                    }
+                    if (top <= 0) {
+                        // Geometry undecipherable in this container: do not overlap the header.
+                        host.setTag(SKIP_TAG);
+                        host.removeView(row);
+                        return;
+                    }
+                    int width = Math.max(1, host.getWidth() > 0 ? host.getWidth() : list.getWidth());
+                    row.measure(
+                            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                    int height = row.getMeasuredHeight();
+                    if (height <= 0) {
+                        return;
+                    }
+                    row.setTranslationY(top);
+
+                    if (!PADDED_TAG.equals(list.getTag())) {
+                        list.setTag(PADDED_TAG);
+                        // Push the chat list down so the first dialog starts right below the row.
+                        int[] hostLoc = new int[2];
+                        int[] listLoc = new int[2];
+                        host.getLocationOnScreen(hostLoc);
+                        list.getLocationOnScreen(listLoc);
+                        int listOffsetInHost = listLoc[1] - hostLoc[1];
+                        int newPadTop = Math.max(list.getPaddingTop(), top + height - listOffsetInHost);
+                        list.setPadding(list.getPaddingLeft(), newPadTop,
+                                list.getPaddingRight(), list.getPaddingBottom());
+                    }
+                } catch (Throwable ignored) { }
+            }
+        });
+    }
+
     /**
-     * Geometric top offset inside `host` for the AI row: the bottom edge of the
-     * last "header-like" sibling above the list (action bar, folder tabs strip).
-     * A sibling counts only if it is visible, short compared to the list
-     * (header-height, not a full-screen overlay), and sits near the top of the
-     * list. This reliably finds the folder tabs strip without depending on
-     * Telegram-internal view classes.
+     * Preferred position for the AI row: right below the folder tabs strip
+     * ("Все чаты" / "Личные"). Falls back to the geometric header detection
+     * when the strip is absent or not measured.
+     */
+    private static int rowTopOffset(ViewGroup host, ViewGroup fragmentView, View list) {
+        try {
+            View tabs = findInstanceOf(fragmentView, org.telegram.ui.Components.FilterTabsView.class);
+            if (tabs != null && tabs.getHeight() > 0 && tabs.getVisibility() == View.VISIBLE) {
+                int[] hostLoc = new int[2];
+                int[] tabsLoc = new int[2];
+                host.getLocationOnScreen(hostLoc);
+                tabs.getLocationOnScreen(tabsLoc);
+                return Math.max(0, tabsLoc[1] + tabs.getHeight() - hostLoc[1]);
+            }
+        } catch (Throwable ignored) { }
+        return computeTopOffset(host, list);
+    }
+
+    /**
+     * Geometric fallback: the bottom edge of the last "header-like" sibling above
+     * the list (action bar, folder tabs strip). A sibling counts only if it is
+     * visible, short compared to the list (header-height, not a full-screen
+     * overlay), and sits near the top of the list.
      */
     private static int computeTopOffset(ViewGroup host, View list) {
         try {
             int[] hostLoc = new int[2];
             int[] listLoc = new int[2];
-            int[] childLoc = new int[3 - 1];
+            int[] childLoc = new int[2];
             host.getLocationOnScreen(hostLoc);
             list.getLocationOnScreen(listLoc);
 
@@ -257,6 +318,27 @@ public class NanoGramAiInit extends ContentProvider {
             }
         } catch (Throwable ignored) { }
         return null;
+    }
+
+    /** Depth-first search collecting ALL views of the given type. */
+    private static <T extends View> ArrayList<T> findAllInstanceOf(ViewGroup root, Class<T> type) {
+        ArrayList<T> result = new ArrayList<>();
+        try {
+            collectInstanceOf(root, type, result);
+        } catch (Throwable ignored) { }
+        return result;
+    }
+
+    private static <T extends View> void collectInstanceOf(View view, Class<T> type, ArrayList<T> out) {
+        if (type.isInstance(view)) {
+            out.add(type.cast(view));
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                collectInstanceOf(group.getChildAt(i), type, out);
+            }
+        }
     }
 
     /** Unwraps the activity from a view context (may be a ContextThemeWrapper). */
