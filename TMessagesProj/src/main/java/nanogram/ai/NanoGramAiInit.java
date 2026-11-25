@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 
 /**
@@ -24,17 +25,25 @@ import android.widget.FrameLayout;
  * Important Telegram detail: the chat list is NOT a separate Activity.
  * The whole app runs inside one window (LaunchActivity), and the dialogs
  * screen is a BaseFragment inside ActionBarLayout. So we check the fragment
- * stack (ActionBarLayout.getLastFragmentIncludeMainTabs) to detect when the
- * dialogs screen is visible, then pin the "NanoGram AI" row at the top of the
- * chat list, below the action bar, and push the first chat row down so
- * nothing is hidden.
+ * stack to detect when the dialogs screen is visible, then pin the
+ * "NanoGram AI" row at the top of the chat list, strictly BELOW the action
+ * bar (which contains the folder tabs such as "All chats"), so the row never
+ * overlaps the folders area and never hides the first chat row.
  *
- * The whole class is fail-soft: every entry point is wrapped in try/catch, so
- * it can never crash or block the app.
+ * Positioning fix: the previous version looked up the first ActionBar found
+ * anywhere in the window, which could be a different fragment's bar with a
+ * wrong height - that made the row land on top of the folder tabs. Now the
+ * bar is taken directly from the visible DialogsActivity fragment, and the
+ * row is placed below that exact bar.
+ *
+ * The whole class is fail-soft: every entry point is wrapped in try/catch,
+ * so it can never crash or block the app.
  */
 public class NanoGramAiInit extends ContentProvider {
 
     private static final String ROW_TAG = "nanogram_ai_row_tag";
+    private static final String PADDED_TAG = "nanogram_ai_padded";
+    private static final String HOOK_TAG = "nanogram_ai_layout_hook";
 
     @Override
     public boolean onCreate() {
@@ -52,12 +61,14 @@ public class NanoGramAiInit extends ContentProvider {
                     public void onActivityResumed(final Activity activity) {
                         try {
                             final View decor = activity.getWindow().getDecorView();
-                            decor.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    attach(decor);
-                                }
-                            });
+                            decor.post(() -> attach(decor));
+                            // Re-check on every layout pass: fragment switches inside the
+                            // single window do not fire onActivityResumed, but they do
+                            // change the layout, and the listener lets us re-attach.
+                            if (decor.findViewWithTag(HOOK_TAG) == null) {
+                                decor.setTag(HOOK_TAG);
+                                decor.getViewTreeObserver().addOnGlobalLayoutListener(() -> attach(decor));
+                            }
                         } catch (Throwable ignored) { }
                     }
 
@@ -78,7 +89,7 @@ public class NanoGramAiInit extends ContentProvider {
         return true;
     }
 
-    /** Pins the "NanoGram AI" row at the top of the dialogs list, below the action bar. */
+    /** Pins the "NanoGram AI" row at the top of the dialogs list, below the folder tabs. */
     private static void attach(View decor) {
         try {
             View content = decor.findViewById(android.R.id.content);
@@ -100,45 +111,56 @@ public class NanoGramAiInit extends ContentProvider {
             if (!(lastFragment instanceof org.telegram.ui.DialogsActivity)) {
                 return; // the chat list is not the visible screen
             }
+            final org.telegram.ui.DialogsActivity dialogs = (org.telegram.ui.DialogsActivity) lastFragment;
 
-            View list = findInstanceOf(root, org.telegram.ui.Components.RecyclerListView.class);
-            if (list == null || !(list.getParent() instanceof ViewGroup)) {
+            View fragmentView = dialogs.getFragmentView();
+            if (!(fragmentView instanceof ViewGroup)) {
                 return;
             }
-            Activity activity = findActivity(root);
+            final ViewGroup host = (ViewGroup) fragmentView;
+
+            // The chat list itself: searched INSIDE this fragment's view, so we never
+            // pick up a list that belongs to another screen (the old bug).
+            final View list = findInstanceOf(host, org.telegram.ui.Components.RecyclerListView.class);
+            if (list == null) {
+                return;
+            }
+            Activity activity = findActivity(host);
             if (activity == null) {
                 return;
             }
-            final ViewGroup host = (ViewGroup) list.getParent();
+
             final View row = NanoGramAiRow.createWithDivider(activity);
             row.setTag(ROW_TAG);
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
             host.addView(row, params);
 
-            // Place the row right below the action bar, above the first chat row.
-            View bar = findInstanceOf(root, org.telegram.ui.ActionBar.ActionBar.class);
+            // Position strictly below the action bar OF THIS FRAGMENT. The action bar
+            // holds the folder tabs ("All chats" and others), so the row always lands
+            // below the folders, never on top of them.
+            final org.telegram.ui.ActionBar.ActionBar bar = dialogs.getActionBar();
+            float top = 0f;
             if (bar != null && bar.getVisibility() == View.VISIBLE) {
-                row.setTranslationY(Math.max(0f, bar.getTranslationY() + bar.getHeight()));
+                top = Math.max(0f, bar.getTranslationY() + bar.getHeight());
             }
+            row.setTranslationY(top);
 
             // Push the chat list down so the first dialog is not hidden behind our row.
-            row.post(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        int width = host.getWidth() > 0 ? host.getWidth() : root.getWidth();
-                        row.measure(
-                                View.MeasureSpec.makeMeasureSpec(Math.max(1, width), View.MeasureSpec.EXACTLY),
-                                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-                        int height = row.getMeasuredHeight();
-                        if (height > 0 && !"nanogram_ai_padded".equals(list.getTag())) {
-                            list.setTag("nanogram_ai_padded");
-                            list.setPadding(list.getPaddingLeft(), list.getPaddingTop() + height,
-                                    list.getPaddingRight(), list.getPaddingBottom());
-                        }
-                    } catch (Throwable ignored) { }
-                }
+            // Applied once per list instance (tagged), so layout passes never stack padding.
+            row.post(() -> {
+                try {
+                    int width = host.getWidth() > 0 ? host.getWidth() : root.getWidth();
+                    row.measure(
+                            View.MeasureSpec.makeMeasureSpec(Math.max(1, width), View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                    int height = row.getMeasuredHeight();
+                    if (height > 0 && !PADDED_TAG.equals(list.getTag())) {
+                        list.setTag(PADDED_TAG);
+                        list.setPadding(list.getPaddingLeft(), list.getPaddingTop() + height,
+                                list.getPaddingRight(), list.getPaddingBottom());
+                    }
+                } catch (Throwable ignored) { }
             });
         } catch (Throwable ignored) { }
     }
