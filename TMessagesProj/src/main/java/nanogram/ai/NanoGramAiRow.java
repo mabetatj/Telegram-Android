@@ -14,18 +14,20 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /**
- * РЎС‚СЂРѕРєР° "NanoGram AI" РІРІРµСЂС…Сѓ СЃРїРёСЃРєР° РґРёР°Р»РѕРіРѕРІ.
+ * The "NanoGram AI" row at the top of the dialogs list.
  *
- * РњРѕРґСѓР»СЊ 3: СЃР°РјРѕРґРѕСЃС‚Р°С‚РѕС‡РЅС‹Р№ РєР»Р°СЃСЃ РЅР° С‡РёСЃС‚РѕРј Android UI (Р±РµР· Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№ РѕС‚ РєР»Р°СЃСЃРѕРІ Telegram-С„РѕСЂРєР°),
- * РїРѕСЌС‚РѕРјСѓ РµРіРѕ РґРѕР±Р°РІР»РµРЅРёРµ РЅРµ РјРѕР¶РµС‚ СЃР»РѕРјР°С‚СЊ СЃР±РѕСЂРєСѓ. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РёР· DialogsActivity (РњРѕРґСѓР»СЊ 4).
+ * Self-contained class on plain Android UI (no dependencies on Telegram fork
+ * classes), so adding it cannot break the build.
  *
- * - РљСЂСѓРіР»Р°СЏ РёРєРѕРЅРєР° "AI" + РЅР°Р·РІР°РЅРёРµ "NanoGram AI" + РїРѕРґР·Р°РіРѕР»РѕРІРѕРє.
- * - РўР°Рї РїРѕ СЃС‚СЂРѕРєРµ РѕС‚РєСЂС‹РІР°РµС‚ NanoGramAiActivity.
- * - Р•РґРёРЅСЃС‚РІРµРЅРЅС‹Р№ РїСѓР±Р»РёС‡РЅС‹Р№ РјРµС‚РѕРґ: NanoGramAiRow.create(activity) вЂ” РІРѕР·РІСЂР°С‰Р°РµС‚ РіРѕС‚РѕРІСѓСЋ View.
+ * - Round "AI" icon + "NanoGram AI" title + subtitle.
+ * - Tapping the row opens NanoGramAiActivity.
+ * - Only public entry point: NanoGramAiRow.create(activity) - returns a ready View.
+ *
+ * All user-visible strings are plain English ASCII so no encoding issue can garble them.
  */
 public class NanoGramAiRow {
 
-    /** РЎРѕР·РґР°С‘С‚ СЃС‚СЂРѕРєСѓ "NanoGram AI"; РІРµС€Р°РµС‚ РЅР° РЅРµС‘ РѕР±СЂР°Р±РѕС‚С‡РёРє РѕС‚РєСЂС‹С‚РёСЏ СЌРєСЂР°РЅР° С‡Р°С‚Р°. */
+    /** Creates the "NanoGram AI" row and attaches the chat screen open handler. */
     public static View create(final Activity activity) {
         Context context = activity;
 
@@ -36,7 +38,7 @@ public class NanoGramAiRow {
         row.setLayoutParams(new ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // --- РљСЂСѓРіР»Р°СЏ РёРєРѕРЅРєР° "AI" ---
+        // --- Round "AI" icon ---
         TextView avatar = new TextView(context);
         avatar.setText("AI");
         avatar.setTextColor(Color.WHITE);
@@ -45,11 +47,11 @@ public class NanoGramAiRow {
         avatar.setGravity(Gravity.CENTER);
         GradientDrawable avatarBg = new GradientDrawable();
         avatarBg.setShape(GradientDrawable.OVAL);
-        avatarBg.setColor(0xFF2B5278); // СЃРёРЅРёР№ NanoGram
+        avatarBg.setColor(0xFF2B5278); // NanoGram blue
         avatar.setBackground(avatarBg);
         row.addView(avatar, new LinearLayout.LayoutParams(dp(context, 46), dp(context, 46)));
 
-        // --- РўРµРєСЃС‚: РЅР°Р·РІР°РЅРёРµ + РїРѕРґР·Р°РіРѕР»РѕРІРѕРє ---
+        // --- Text: title + subtitle ---
         LinearLayout texts = new LinearLayout(context);
         texts.setOrientation(LinearLayout.VERTICAL);
         texts.setPadding(dp(context, 14), 0, 0, 0);
@@ -62,7 +64,7 @@ public class NanoGramAiRow {
         texts.addView(title);
 
         TextView subtitle = new TextView(context);
-        subtitle.setText("Р›РѕРєР°Р»СЊРЅС‹Р№ РР-Р°СЃСЃРёСЃС‚РµРЅС‚");
+        subtitle.setText("Your local AI assistant");
         subtitle.setTextColor(0xFF6D7A85);
         subtitle.setTextSize(14);
         texts.addView(subtitle);
@@ -70,7 +72,7 @@ public class NanoGramAiRow {
         row.addView(texts, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        // --- РўР°Рї: РѕС‚РєСЂС‹С‚СЊ СЌРєСЂР°РЅ РР-С‡Р°С‚Р° ---
+        // --- Tap: open the AI chat screen ---
         row.setOnClickListener(v -> {
             try {
                 Intent intent = new Intent(context, NanoGramAiActivity.class);
@@ -81,7 +83,7 @@ public class NanoGramAiRow {
         return row;
     }
 
-    /** РљРѕРЅС‚РµР№РЅРµСЂ СЃ РіРѕСЂРёР·РѕРЅС‚Р°Р»СЊРЅРѕР№ РїРѕР»РѕСЃРєРѕР№-СЂР°Р·РґРµР»РёС‚РµР»РµРј вЂ” СѓРґРѕР±РЅРѕ РІСЃС‚Р°РІРёС‚СЊ РїРµСЂРІРѕР№ СЃС‚СЂРѕРєРѕР№ РІ СЃРїРёСЃРѕРє. */
+    /** Container with a bottom divider - easy to insert as the first row of a list. */
     public static View createWithDivider(Activity activity) {
         FrameLayout container = new FrameLayout(activity);
         container.addView(create(activity), new FrameLayout.LayoutParams(
