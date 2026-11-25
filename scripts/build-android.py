@@ -2,10 +2,9 @@
 """Build with optional local credentials, without putting them in arguments or logs.
 
 Also applies the NanoGram AI patch before the Gradle build: pins a "NanoGram AI"
-row at the top of the dialogs list (right below the action bar, above the chat
-rows, on every dialogs page). Tapping it opens the AI chat. The patch is
-idempotent; it fails loudly if the anchor disappears upstream so that a broken
-APK is never shipped silently.
+row at the top of the dialogs list (inside the chat list screen of the app, on
+every dialogs page). Tapping it opens the AI chat. The patch is idempotent and
+fails loudly if the anchor disappears upstream so a broken APK is never shipped.
 """
 import argparse
 import json
@@ -16,36 +15,41 @@ import subprocess
 
 DIALOGS_PATH = Path('TMessagesProj/src/main/java/org/telegram/ui/DialogsActivity.java')
 
-AI_ROW_JAVA_TEMPLATE = '''try {{
-    final android.view.View nanogramAiList = {var}.listView;
-    nanogramAiList.post(new Runnable() {{
+# Inserted right after `... = new ViewPage(...);` inside createDialogsView().
+# Direct (non-reflective) references keep working under R8 obfuscation, and the
+# whole block is wrapped in try/catch so it can never crash the dialogs screen.
+AI_ROW_JAVA_TEMPLATE = '''try {
+    final android.view.View ngAiList = __VAR__.listView;
+    ngAiList.post(new Runnable() {
         @Override
-        public void run() {{
-            try {{
-                if (!(nanogramAiList.getParent() instanceof android.view.ViewGroup)) {{
+        public void run() {
+            try {
+                if (!(ngAiList.getParent() instanceof android.view.ViewGroup)) {
                     return;
-                }}
-                android.view.ViewGroup nanogramAiParent = (android.view.ViewGroup) nanogramAiList.getParent();
-                if (nanogramAiParent.findViewWithTag("nanogram_ai_row_tag") != null) {{
+                }
+                android.view.ViewGroup ngAiHost = (android.view.ViewGroup) ngAiList.getParent();
+                if (ngAiHost.findViewWithTag("nanogram_ai_row_tag") != null) {
                     return;
-                }}
-                android.app.Activity nanogramAiActivity = getParentActivity();
-                if (nanogramAiActivity == null) {{
+                }
+                android.app.Activity ngAiAct = getParentActivity();
+                if (ngAiAct == null) {
                     return;
-                }}
-                android.view.View nanogramAiRow = nanogram.ai.NanoGramAiRow.createWithDivider(nanogramAiActivity);
-                nanogramAiRow.setTag("nanogram_ai_row_tag");
-                nanogramAiParent.addView(nanogramAiRow, new android.widget.FrameLayout.LayoutParams(-1, -2, 49));
-            }} catch (Throwable nanogramAiIgnore) {{ }}
-        }}
-    }});
-}} catch (Throwable nanogramAiIgnore) {{ }}'''
+                }
+                android.view.View ngAiRow = nanogram.ai.NanoGramAiRow.createWithDivider(ngAiAct);
+                ngAiRow.setTag("nanogram_ai_row_tag");
+                ngAiHost.addView(ngAiRow, new android.widget.FrameLayout.LayoutParams(-1, -2, 49));
+            } catch (Throwable ngAiIgnore) {
+            }
+        }
+    });
+} catch (Throwable ngAiIgnore) {
+}'''
 
-AI_ROW_ANCHOR = re.compile(r'^([ \t]*)([A-Za-z_][A-Za-z0-9_]*)\.listView\.setInstantClick\(true\);[ \t]*$', re.M)
+VIEW_PAGE_ANCHOR = re.compile(r'^([ \t]*)([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*new[ \t]+ViewPage[ \t]*\(', re.M)
 
 
 def patch_dialogs(root):
-    """Insert the NanoGram AI row into the dialogs list (in-list chat entry)."""
+    """Pin the NanoGram AI row into every dialogs page of DialogsActivity."""
     path = root / DIALOGS_PATH
     if not path.is_file():
         raise SystemExit('nanogram-ai: DialogsActivity.java not found; aborting build.')
@@ -53,18 +57,19 @@ def patch_dialogs(root):
     if 'nanogram.ai.NanoGramAiRow' in source:
         print('nanogram-ai: row patch already applied')
         return
-    matches = list(AI_ROW_ANCHOR.finditer(source))
+    matches = list(VIEW_PAGE_ANCHOR.finditer(source))
     if not matches:
-        raise SystemExit('nanogram-ai: anchor not found in DialogsActivity.java; aborting build.')
+        raise SystemExit('nanogram-ai: ViewPage anchor not found in DialogsActivity.java; aborting build.')
     patched = source
     for match in reversed(matches):
         indent, var = match.group(1), match.group(2)
-        block_lines = []
-        for line in AI_ROW_JAVA_TEMPLATE.format(var=var).split('\n'):
-            block_lines.append((indent + line).rstrip() if line.strip() else '')
-        block = '\n'.join(block_lines)
-        end = match.end()
-        patched = patched[:end] + '\n' + block + patched[end:]
+        semicolon = patched.find(';', match.end())
+        if semicolon == -1 or semicolon - match.end() > 400:
+            raise SystemExit('nanogram-ai: ViewPage statement not resolvable; aborting build.')
+        block = AI_ROW_JAVA_TEMPLATE.replace('__VAR__', var)
+        lines = [(indent + line).rstrip() if line.strip() else '' for line in block.split('\n')]
+        insert = '\n' + '\n'.join(lines)
+        patched = patched[:semicolon + 1] + insert + patched[semicolon + 1:]
     expected = len(matches)
     actual = patched.count('nanogram_ai_row_tag')
     if actual != expected:
