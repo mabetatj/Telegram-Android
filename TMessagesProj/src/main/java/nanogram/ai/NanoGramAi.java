@@ -125,13 +125,20 @@ public class NanoGramAi {
             listener.onError("API-ключ не найден: добавьте секрет GROQ_API_KEY в репозиторий и пересоберите.", false);
             return;
         }
+        final String trimmedKey = key.trim();
+        if (!trimmedKey.startsWith("gsk_")) {
+            listener.onError("Ключ в секретах не похож на ключ Groq (должен начинаться с gsk_). "
+                    + "Проверьте секрет GROQ_API_KEY на console.groq.com/keys и пересоберите APK.", false);
+            return;
+        }
 
         history.add(new Message("user", text.trim()));
         saveHistory();
 
         final okhttp3.Call call = client.newCall(new Request.Builder()
                 .url(ENDPOINT)
-                .header("Authorization", "Bearer " + key.trim())
+                .header("Authorization", "Bearer " + trimmedKey)
+                .header("User-Agent", "NanoGram/1.0")
                 .post(RequestBody.create(buildBody(), MediaType.parse("application/json")))
                 .build());
         currentCall = call;
@@ -141,7 +148,7 @@ public class NanoGramAi {
             StringBuilder partial = new StringBuilder();
             try (Response resp = call.execute()) {
                 if (!resp.isSuccessful()) {
-                    listener.onError("Groq: HTTP " + resp.code(), false);
+                    listener.onError(describeHttpError(resp.code()), false);
                     return;
                 }
                 BufferedReader reader = new BufferedReader(
@@ -182,6 +189,32 @@ public class NanoGramAi {
         });
         worker.setName("nanogram-ai-request");
         worker.start();
+    }
+
+    /**
+     * Человекопонятное описание кодов ошибок Groq.
+     * 403 при валидном ключе gsk_ — почти всегда гео-блокировка Cloudflare:
+     * Groq ограничивает доступ из ряда регионов; помогает VPN с другой страны (США/Европа).
+     */
+    private static String describeHttpError(int code) {
+        switch (code) {
+            case 401:
+                return "Groq отклонил ключ (401): он отозван или неверен. Создайте новый на console.groq.com/keys, обновите секрет GROQ_API_KEY и пересоберите APK.";
+            case 403:
+                return "Доступ запрещён (403). Ключ gsk_ верный, но Groq блокирует запрос — обычно это ограничение региона (Cloudflare). Попробуйте VPN с сервером в США/Европе или смените локацию и отправьте сообщение снова.";
+            case 404:
+                return "Модель не найдена (404): openai/gpt-oss-120b могла быть выведена из эксплуатации. Сообщите, чтобы обновить модель в коде.";
+            case 413:
+                return "Диалог слишком длинный (413): очистите историю и повторите.";
+            case 422:
+                return "Некорректный запрос (422): сообщите об этой ошибке, чтобы поправить формат запроса.";
+            case 429:
+                return "Лимит запросов исчерпан (429): подождите минуту и попробуйте снова — бесплатный тариф Groq ограничивает частоту.";
+            case 500: case 502: case 503: case 529:
+                return "Groq временно недоступен (" + code + "): попробуйте через пару минут.";
+            default:
+                return "Groq вернул ошибку HTTP " + code + ".";
+        }
     }
 
     /** Человекопонятное описание сетевых проблем OkHttp. */
