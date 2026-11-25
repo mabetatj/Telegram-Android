@@ -1,14 +1,19 @@
 package nanogram.ai;
 
 import android.app.Activity;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -24,12 +29,15 @@ import java.util.List;
  * so adding it cannot break the build.
  *
  * - Dark theme in NanoGram colors.
+ * - The header is pushed below the phone status bar (time, battery and other icons),
+ *   so the "NanoGram AI" labels never merge with the system UI.
+ * - A back arrow below the header (top-left) returns to the NanoGram chat list.
  * - User messages on the right, AI replies on the left, streamed token by token.
- * - All user-visible strings are plain English ASCII, so no encoding issue can garble them.
  * - The send button turns into a stop button while a reply is streaming.
  */
 public class NanoGramAiActivity extends Activity {
 
+    private LinearLayout headerBlock;
     private LinearLayout messagesList;
     private ScrollView scroll;
     private EditText inputField;
@@ -48,14 +56,45 @@ public class NanoGramAiActivity extends Activity {
         root.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
 
-        // --- Header ---
+        // --- Header (title, subtitle, back arrow), kept below the status bar ---
+        headerBlock = new LinearLayout(this);
+        headerBlock.setOrientation(LinearLayout.VERTICAL);
+        headerBlock.setPadding(0, dp(18), 0, 0);
+
         TextView header = new TextView(this);
         header.setText("NanoGram AI");
         header.setTextColor(Color.WHITE);
         header.setTypeface(Typeface.DEFAULT_BOLD);
         header.setTextSize(20);
-        header.setPadding(dp(20), dp(18), dp(20), dp(14));
-        root.addView(header, new LinearLayout.LayoutParams(
+        header.setPadding(dp(20), dp(2), dp(20), dp(0));
+        headerBlock.addView(header, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        TextView headerSubtitle = new TextView(this);
+        headerSubtitle.setText("Your local AI assistant");
+        headerSubtitle.setTextColor(0xFF6D7A85);
+        headerSubtitle.setTextSize(14);
+        headerSubtitle.setPadding(dp(20), dp(0), dp(20), dp(8));
+        headerBlock.addView(headerSubtitle, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout backRow = new LinearLayout(this);
+        backRow.setOrientation(LinearLayout.HORIZONTAL);
+        backRow.setGravity(Gravity.CENTER_VERTICAL);
+        backRow.setPadding(dp(20), dp(6), dp(20), dp(10));
+        backRow.addView(createBackArrow(), new LinearLayout.LayoutParams(dp(24), dp(24)));
+        TextView backLabel = new TextView(this);
+        backLabel.setText("Back to chats");
+        backLabel.setTextColor(0xFF6D7A85);
+        backLabel.setTextSize(14);
+        backLabel.setPadding(dp(8), dp(0), dp(0), dp(0));
+        backRow.addView(backLabel, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        backRow.setOnClickListener(v -> exitChat());
+        headerBlock.addView(backRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        root.addView(headerBlock, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         View line = new View(this);
@@ -111,6 +150,7 @@ public class NanoGramAiActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
+        applyStatusBarInset();
 
         // --- Listeners ---
         inputField.addTextChangedListener(new TextWatcher() {
@@ -132,6 +172,53 @@ public class NanoGramAiActivity extends Activity {
         });
 
         renderHistory();
+    }
+
+    /** Keeps the header below the phone status bar (time, battery and other icons). */
+    private void applyStatusBarInset() {
+        View decor = getWindow().getDecorView();
+        decor.setOnApplyWindowInsetsListener((v, insets) -> {
+            try {
+                int top;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    top = insets.getInsets(WindowInsets.Type.systemBars()).top;
+                } else {
+                    top = insets.getSystemWindowInsetTop();
+                }
+                headerBlock.setPadding(headerBlock.getPaddingLeft(),
+                        top > 0 ? top + dp(6) : dp(18),
+                        headerBlock.getPaddingRight(), dp(0));
+            } catch (Throwable ignored) { }
+            return insets;
+        });
+    }
+
+    /** A code-drawn back chevron (no image resources, ASCII only). */
+    private View createBackArrow() {
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.WHITE);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(Math.max(2f, dp(2.2f)));
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND);
+        final Path path = new Path();
+        path.moveTo(dp(15), dp(4));
+        path.lineTo(dp(7), dp(12));
+        path.lineTo(dp(15), dp(20));
+        return new View(this) {
+            @Override
+            protected void onDraw(Canvas canvas) {
+                canvas.drawPath(path, paint);
+            }
+        };
+    }
+
+    /** Returns to the NanoGram chat list, stopping any streaming reply. */
+    private void exitChat() {
+        try {
+            NanoGramAi.getInstance(this).cancel();
+        } catch (Throwable ignored) { }
+        finish();
     }
 
     /** Shows the saved history from previous launches. */
@@ -242,8 +329,7 @@ public class NanoGramAiActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        NanoGramAi.getInstance(this).cancel();
-        super.onBackPressed();
+        exitChat();
     }
 
     private int dp(float v) {
