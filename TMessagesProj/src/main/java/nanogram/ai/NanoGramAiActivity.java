@@ -64,6 +64,7 @@ public class NanoGramAiActivity extends Activity {
     private TextView sendButton;
     private TextView assistantBubble;   // пузырь текущего ответа (стриминг)
     private TextView typingBubble;      // «Думаю…» до первого токена
+    private long streamingTime;         // время создания стримингового пузыря
     private StringBuilder streamingText = new StringBuilder();
     private volatile boolean generating = false;
     private boolean lastWasMine = false; // для группировки подряд идущих сообщений
@@ -235,10 +236,11 @@ public class NanoGramAiActivity extends Activity {
                         typingBubble = null;
                     }
                     if (assistantBubble == null) {
-                        assistantBubble = addBubble("", false, System.currentTimeMillis(), false);
+                        streamingTime = System.currentTimeMillis();
+                        assistantBubble = addBubble("", false, streamingTime, false);
                     }
                     streamingText.append(delta);
-                    assistantBubble.setText(withTime(streamingText.toString(), false));
+                    assistantBubble.setText(withTime(streamingText.toString(), false, streamingTime));
                     scrollToBottom();
                 });
             }
@@ -343,16 +345,17 @@ public class NanoGramAiActivity extends Activity {
         }
     }
 
-    /** Текст пузыря + время мелким шрифтом в конце, как в Telegram. */
+    /** Текст пузыря + время мелким шрифтом в конце, как в Telegram. time <= 0 — без времени. */
     private CharSequence withTime(String text, boolean mine, long time) {
-        SpannableStringBuilder ssb = new SpannableStringBuilder(text != null ? text : "");
+        String body = text != null ? text : "";
+        SpannableStringBuilder ssb = new SpannableStringBuilder(body);
         if (time > 0) {
             String stamp = "  " + new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(time));
             ssb.append(stamp);
-            ssb.setSpan(new RelativeSizeSpan(0.72f), text.length(), ssb.length(),
+            ssb.setSpan(new RelativeSizeSpan(0.72f), body.length(), ssb.length(),
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             ssb.setSpan(new ForegroundColorSpan(mine ? COLOR_TIME_OUT : COLOR_TIME_IN),
-                    text.length(), ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    body.length(), ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
         return ssb;
     }
