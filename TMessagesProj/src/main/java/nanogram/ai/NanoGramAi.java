@@ -1,7 +1,6 @@
 package nanogram.ai;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -10,6 +9,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -35,7 +35,7 @@ import okhttp3.Response;
  * - Ответ приходит потоково (streaming): колбэк onToken вызывается по мере генерации.
  *
  * ВАЖНО для UI: колбэки Listener приходят из фонового потока —
- * обновлять интерфейс нужно через runOnUiThread(...) или Handler(Looper.getMainLooper()).
+ * обновлять интерфейс нужно через runOnUiThread(...).
  */
 public class NanoGramAi {
 
@@ -114,14 +114,10 @@ public class NanoGramAi {
     /** Есть ли выполняющийся запрос прямо сейчас. */
     public boolean isBusy() {
         okhttp3.Call call = currentCall;
-        return call != null && !call.isCanceled() && !call.isExecuted();
+        return call != null && !call.isCanceled();
     }
 
-    /**
-     * Отправить сообщение пользователя; ответ придёт стримингом через Listener.
-     * Сообщение пользователя НЕ сохраняется в историю при ошибке — иначе
-     * история засоряется неотправленными репликами.
-     */
+    /** Отправить сообщение пользователя; ответ придёт стримингом через Listener. */
     public void send(final String text, final Listener listener) {
         if (text == null || text.trim().isEmpty()) return;
         final String key = getApiKey();
@@ -140,7 +136,7 @@ public class NanoGramAi {
                 .build());
         currentCall = call;
 
-        final Thread worker = new Thread(() -> {
+        Thread worker = new Thread(() -> {
             boolean ok = false;
             StringBuilder partial = new StringBuilder();
             try (Response resp = call.execute()) {
@@ -173,16 +169,30 @@ public class NanoGramAi {
                 history.add(new Message("assistant", partial.toString()));
                 saveHistory();
                 ok = true;
-            } catch (okhttp3.Call canceled) {
-                listener.onError("Отменено", true);
             } catch (Exception e) {
-                listener.onError("Ошибка сети: " + e.getMessage(), false);
+                if (call.isCanceled()) {
+                    // Отменил сам пользователь кнопкой «стоп» — это не ошибка сети.
+                    listener.onError("Остановлено", true);
+                } else {
+                    listener.onError("Ошибка сети: " + describe(e), false);
+                }
             } finally {
                 if (ok) listener.onSuccess();
             }
         });
         worker.setName("nanogram-ai-request");
         worker.start();
+    }
+
+    /** Человекопонятное описание сетевых проблем OkHttp. */
+    private static String describe(Exception e) {
+        String msg = e.getMessage();
+        if (msg == null) return e.getClass().getSimpleName();
+        msg = msg.toLowerCase();
+        if (msg.contains("timeout")) return "сервер не ответил вовремя (проверьте VPN/интернет)";
+        if (msg.contains("unable to resolve host")) return "нет подключения к интернету";
+        if (msg.contains("connection")) return "нет связи с сервером (проверьте VPN/интернет)";
+        return msg;
     }
 
     public void cancel() {
@@ -218,13 +228,9 @@ public class NanoGramAi {
             for (Message m : history) arr.put(new JSONObject().put("role", m.role).put("content", m.content));
             File f = new File(context.getFilesDir(), "nanogram_ai_history.json");
             FileOutputStream out = new FileOutputStream(f);
-            out.write(arr.toString().getBytes(UTF_8()));
+            out.write(arr.toString().getBytes(StandardCharsets.UTF_8));
             out.close();
         } catch (Exception ignored) { }
-    }
-
-    private static java.nio.charset.Charset UTF_8() {
-        return StandardCharsets.UTF_8;
     }
 
     private void loadHistory() {
