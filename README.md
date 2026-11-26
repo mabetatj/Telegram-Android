@@ -1,4 +1,4 @@
-# 🚀 NanoGram for Android
+ v7 build # 🚀 NanoGram for Android
 
 **An unofficial Telegram client with more control over your conversations.**
 
